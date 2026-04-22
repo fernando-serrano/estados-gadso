@@ -7,7 +7,7 @@ from playwright.sync_api import sync_playwright
 from .auth import login
 from .browser import close_browser, open_browser
 from .config import credentials_for_group, load_settings
-from .logging import build_logger
+from .logging import RunLoggers
 from ..mis_vigilantes_flow import navigate_to_mis_vigilantes
 
 
@@ -29,7 +29,9 @@ def parse_args() -> argparse.Namespace:
 
 def run_login_for_group(grupo: str, solo_login: bool = False) -> None:
     settings = load_settings()
-    logger = build_logger(settings.logs_dir, name=f"sucamec_login_{grupo.lower()}")
+    run_loggers = RunLoggers(settings.logs_dir)
+    logger = run_loggers.get("login_flow")
+    mis_vigilantes_logger = run_loggers.get("mis_vigilantes_flow")
     browser = None
     context = None
 
@@ -39,8 +41,8 @@ def run_login_for_group(grupo: str, solo_login: bool = False) -> None:
             login(page, settings, credentials_for_group(grupo), grupo, logger)
             logger.info("[%s] URL post-login: %s", grupo, page.url)
             if not solo_login:
-                navigate_to_mis_vigilantes(page, logger)
-                logger.info("[%s] URL post-MIS VIGILANTES: %s", grupo, page.url)
+                navigate_to_mis_vigilantes(page, mis_vigilantes_logger)
+                mis_vigilantes_logger.info("[%s] URL post-MIS VIGILANTES: %s", grupo, page.url)
 
             if settings.hold_browser_open and not settings.headless:
                 logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
@@ -62,6 +64,7 @@ def run_login_for_group(grupo: str, solo_login: bool = False) -> None:
                     logger.info("[%s] Interrupcion manual recibida", grupo)
         finally:
             close_browser(browser, context, logger=logger)
+            run_loggers.close()
 
 
 def main() -> int:

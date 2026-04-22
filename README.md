@@ -24,6 +24,19 @@ src/agents_flow/
 
 `agents_flow` representa el proceso completo. Cada carpeta interna representa una etapa del flujo para mantener bajo acoplamiento. El archivo `example/carnet_emision.py` queda como referencia historica.
 
+Los logs se generan por corrida y por subflujo:
+
+```text
+logs/
+  20260422_113000/
+    login_flow/
+      login_flow.log
+    mis_vigilantes_flow/
+      mis_vigilantes_flow.log
+```
+
+`SUCAMEC_LOG_MAX_RUNS=10` conserva como maximo 10 carpetas de ejecucion y elimina la mas antigua al crear una nueva.
+
 ## Instalacion
 
 ```powershell
@@ -58,7 +71,7 @@ SUCAMEC_OCR_MAX_INTENTOS=4
 SUCAMEC_LOGIN_CAPTCHA_RETRIES=3
 SUCAMEC_FORCE_FIRST_CAPTCHA=
 SUCAMEC_LOGIN_VALIDATION_TIMEOUT_MS=12000
-SUCAMEC_LOG_MAX_FILES=10
+SUCAMEC_LOG_MAX_RUNS=10
 ```
 
 Tambien se respetan variables heredadas del flujo anterior cuando existen, por ejemplo `CARNET_HEADLESS`, `HOLD_BROWSER_OPEN`, `CARNET_OCR_MAX_INTENTOS` y `LOGIN_VALIDATION_TIMEOUT_MS`.
