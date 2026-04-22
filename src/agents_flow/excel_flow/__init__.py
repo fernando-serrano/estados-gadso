@@ -1,0 +1,1 @@
+"""Subflujo para salida Excel."""

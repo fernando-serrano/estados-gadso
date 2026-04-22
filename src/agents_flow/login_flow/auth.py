@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import logging
+import time
+from io import BytesIO
+
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from playwright.sync_api import Page
+
+from .config import Credentials, Settings
+from .selectors import ERROR_SELECTORS, LOGIN_SELECTORS, SUCCESS_SELECTORS
+
+OCR_READER = None
+NUMPY_MODULE = None
+
+
+def get_ocr_reader():
+    global OCR_READER, NUMPY_MODULE
+    if OCR_READER is not None and NUMPY_MODULE is not None:
+        return OCR_READER, NUMPY_MODULE
+    try:
+        import easyocr
+        import numpy as np
+    except Exception:
+        return None, None
+
+    OCR_READER = easyocr.Reader(["en"], gpu=False, verbose=False)
+    NUMPY_MODULE = np
+    return OCR_READER, NUMPY_MODULE
+
+
+def write_input(page: Page, selector: str, value: str) -> None:
+    field = page.locator(selector)
+    field.wait_for(state="visible", timeout=12000)
+    field.click()
+    field.fill(value)
+    field.evaluate(
+        'el => { el.dispatchEvent(new Event("input", {bubbles:true})); '
+        'el.dispatchEvent(new Event("change", {bubbles:true})); }'
+    )
+    field.blur()
+    if (field.input_value() or "") != value:
+        field.click()
+        field.press("Control+A")
+        field.press("Backspace")
+        field.type(value, delay=12)
+        field.evaluate(
+            'el => { el.dispatchEvent(new Event("input", {bubbles:true})); '
+            'el.dispatchEvent(new Event("change", {bubbles:true})); }'
+        )
+        field.blur()
+
+
+def activate_traditional_tab(page: Page) -> None:
+    tab = page.locator(LOGIN_SELECTORS["tab_tradicional"]).first
+    tab.wait_for(state="visible", timeout=6000)
+    tab.click(timeout=6000)
+
+
+def page_shows_service_unavailable(page: Page) -> bool:
+    try:
+        title = (page.title() or "").lower()
+        if "service unavailable" in title:
+            return True
+    except Exception:
+        pass
+
+    try:
+        body = (page.locator("body").inner_text(timeout=350) or "").lower()
+        return "service unavailable" in body and "sucamec" in body
+    except Exception:
+        return False
+
+
+def wait_until_service_available(page: Page, login_url: str, wait_seconds: int = 8) -> None:
+    while page_shows_service_unavailable(page):
+        page.wait_for_timeout(max(1, wait_seconds) * 1000)
+        page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
+
+
+def clean_captcha_text(raw_text: str) -> str:
+    text = str(raw_text or "").strip().upper().replace(" ", "").replace("\n", "").replace("\r", "")
+    return "".join(char for char in text if char.isalnum())
+
+
+def is_valid_captcha(text: str) -> bool:
+    return bool(text) and len(text) == 5 and text.isalnum()
+
+
+def preprocess_captcha(image_bytes: bytes, variant: int = 0) -> Image.Image:
+    image = Image.open(BytesIO(image_bytes)).convert("L")
+    if variant == 0:
+        image = ImageEnhance.Contrast(image).enhance(3.5)
+        width, height = image.size
+        image = image.resize((width * 3, height * 3), Image.LANCZOS)
+        image = image.filter(ImageFilter.MedianFilter(size=3))
+        image = ImageOps.invert(image)
+        return image.point(lambda p: 255 if p > 130 else 0)
+    if variant == 1:
+        image = ImageEnhance.Contrast(image).enhance(2.8)
+        width, height = image.size
+        image = image.resize((width * 2, height * 2), Image.LANCZOS)
+        image = image.filter(ImageFilter.MedianFilter(size=5))
+        return image.point(lambda p: 255 if p > 160 else 0)
+
+    image = ImageEnhance.Contrast(image).enhance(4.0)
+    width, height = image.size
+    image = image.resize((width * 3, height * 3), Image.LANCZOS)
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
+    image = ImageOps.invert(image)
+    return image.point(lambda p: 255 if p > 110 else 0)
+
+
+def read_captcha_from_image(image: Image.Image) -> str:
+    reader, np_module = get_ocr_reader()
+    if reader is None or np_module is None:
+        return ""
+    try:
+        result = reader.readtext(
+            np_module.array(image),
+            detail=0,
+            paragraph=False,
+            allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        )
+    except Exception:
+        return ""
+    return clean_captcha_text(" ".join(str(item or "") for item in result))
+
+
+def solve_captcha(page: Page, logger: logging.Logger, max_attempts: int) -> str:
+    reader, _ = get_ocr_reader()
+    if reader is None:
+        raise RuntimeError("OCR no disponible. Instala easyocr, pillow y numpy.")
+
+    for attempt in range(1, max_attempts + 1):
+        image_locator = page.locator(LOGIN_SELECTORS["captcha_img"])
+        image_locator.wait_for(state="visible", timeout=12000)
+        image_bytes = image_locator.screenshot()
+
+        for variant in (0, 1, 2):
+            candidate = read_captcha_from_image(preprocess_captcha(image_bytes, variant))
+            if is_valid_captcha(candidate):
+                logger.info("Captcha OCR resuelto en intento %s", attempt)
+                return candidate
+
+        logger.warning("OCR no encontro captcha valido en intento %s/%s", attempt, max_attempts)
+        try:
+            page.locator(LOGIN_SELECTORS["boton_refresh"]).click(timeout=4000)
+            page.wait_for_timeout(150)
+        except Exception:
+            pass
+
+    raise RuntimeError(f"No se pudo resolver captcha tras {max_attempts} intentos")
+
+
+def validate_login_result(page: Page, timeout_ms: int) -> tuple[bool, str | None, float]:
+    started_at = time.time()
+    while (time.time() - started_at) * 1000 < timeout_ms:
+        try:
+            if "/faces/aplicacion/inicio.xhtml" in (page.url or "").lower():
+                return True, None, time.time() - started_at
+        except Exception:
+            pass
+
+        for selector in SUCCESS_SELECTORS:
+            try:
+                if page.locator(selector).first.is_visible(timeout=120):
+                    return True, None, time.time() - started_at
+            except Exception:
+                pass
+
+        for selector in ERROR_SELECTORS:
+            try:
+                locator = page.locator(selector)
+                if locator.count() > 0:
+                    text = (locator.first.inner_text() or "").strip()
+                    if text:
+                        return False, text, time.time() - started_at
+            except Exception:
+                pass
+
+        page.wait_for_timeout(140)
+
+    return False, "No se confirmo sesion autenticada en el tiempo esperado", time.time() - started_at
+
+
+def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, logger: logging.Logger) -> None:
+    credentials.validate(grupo)
+    logger.info("[%s] Navegando a login", grupo)
+    page.goto(settings.login_url, wait_until="domcontentloaded", timeout=45000)
+    wait_until_service_available(page, settings.login_url)
+
+    activate_traditional_tab(page)
+    page.locator(LOGIN_SELECTORS["numero_documento"]).wait_for(state="visible", timeout=9000)
+
+    page.select_option(LOGIN_SELECTORS["tipo_doc_select"], value=credentials.tipo_documento_valor)
+    page.wait_for_timeout(300)
+
+    write_input(page, LOGIN_SELECTORS["numero_documento"], credentials.numero_documento)
+    write_input(page, LOGIN_SELECTORS["usuario"], credentials.usuario)
+    write_input(page, LOGIN_SELECTORS["clave"], credentials.contrasena)
+    logger.info("[%s] Credenciales cargadas", grupo)
+
+    captcha_text = solve_captcha(page, logger, settings.ocr_max_intentos)
+    write_input(page, LOGIN_SELECTORS["captcha_input"], captcha_text)
+    logger.info("[%s] Captcha escrito automaticamente", grupo)
+
+    page.locator(LOGIN_SELECTORS["ingresar"]).click(timeout=10000)
+    ok, error_message, elapsed = validate_login_result(page, settings.login_validation_timeout_ms)
+    if not ok:
+        raise RuntimeError(f"[{grupo}] Login fallido: {error_message}")
+
+    logger.info("[%s] Login exitoso en %.2fs", grupo, elapsed)
