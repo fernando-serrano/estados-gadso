@@ -77,6 +77,7 @@ En Windows tambien puedes usar el `.bat`:
 run_agents_flow.bat
 run_agents_flow.bat SELVA
 run_agents_flow.bat TODOS
+run_agents_flow.bat JV --solo-login
 ```
 
 Tambien se puede ejecutar solo el subflujo de login:
@@ -86,6 +87,12 @@ python -m src.agents_flow.login_flow.cli --grupo JV
 ```
 
 El comando abre SUCAMEC, completa autenticacion tradicional, resuelve el captcha por OCR y valida que la sesion haya cargado. Si `SUCAMEC_HOLD_BROWSER_OPEN=1` y el navegador no esta en headless, deja la ventana abierta para inspeccion.
+
+Despues del login, el flujo navega a `CONSULTAS > MIS VIGILANTES`. Para probar solo login:
+
+```powershell
+python -m src.agents_flow.cli --grupo JV --solo-login
+```
 
 ## Siguiente etapa
 

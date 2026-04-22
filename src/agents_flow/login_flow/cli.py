@@ -8,6 +8,7 @@ from .auth import login
 from .browser import close_browser, open_browser
 from .config import credentials_for_group, load_settings
 from .logging import build_logger
+from ..mis_vigilantes_flow import navigate_to_mis_vigilantes
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,10 +19,15 @@ def parse_args() -> argparse.Namespace:
         default="JV",
         help="Credenciales a usar para probar login.",
     )
+    parser.add_argument(
+        "--solo-login",
+        action="store_true",
+        help="Ejecuta solo el login y no navega a CONSULTAS > MIS VIGILANTES.",
+    )
     return parser.parse_args()
 
 
-def run_login_for_group(grupo: str) -> None:
+def run_login_for_group(grupo: str, solo_login: bool = False) -> None:
     settings = load_settings()
     logger = build_logger(settings.logs_dir, name=f"sucamec_login_{grupo.lower()}")
     browser = None
@@ -32,6 +38,9 @@ def run_login_for_group(grupo: str) -> None:
             browser, context, page = open_browser(playwright, settings)
             login(page, settings, credentials_for_group(grupo), grupo, logger)
             logger.info("[%s] URL post-login: %s", grupo, page.url)
+            if not solo_login:
+                navigate_to_mis_vigilantes(page, logger)
+                logger.info("[%s] URL post-MIS VIGILANTES: %s", grupo, page.url)
 
             if settings.hold_browser_open and not settings.headless:
                 logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
@@ -59,7 +68,7 @@ def main() -> int:
     args = parse_args()
     groups = ["JV", "SELVA"] if args.grupo == "TODOS" else [args.grupo]
     for group in groups:
-        run_login_for_group(group)
+        run_login_for_group(group, solo_login=args.solo_login)
     return 0
 
 
