@@ -55,7 +55,10 @@ Variables utiles:
 SUCAMEC_HEADLESS=0
 SUCAMEC_HOLD_BROWSER_OPEN=1
 SUCAMEC_OCR_MAX_INTENTOS=4
+SUCAMEC_LOGIN_CAPTCHA_RETRIES=3
+SUCAMEC_FORCE_FIRST_CAPTCHA=
 SUCAMEC_LOGIN_VALIDATION_TIMEOUT_MS=12000
+SUCAMEC_LOG_MAX_FILES=10
 ```
 
 Tambien se respetan variables heredadas del flujo anterior cuando existen, por ejemplo `CARNET_HEADLESS`, `HOLD_BROWSER_OPEN`, `CARNET_OCR_MAX_INTENTOS` y `LOGIN_VALIDATION_TIMEOUT_MS`.
@@ -66,6 +69,14 @@ Tambien se respetan variables heredadas del flujo anterior cuando existen, por e
 python -m src.agents_flow.cli --grupo JV
 python -m src.agents_flow.cli --grupo SELVA
 python -m src.agents_flow.cli --grupo TODOS
+```
+
+En Windows tambien puedes usar el `.bat`:
+
+```bat
+run_agents_flow.bat
+run_agents_flow.bat SELVA
+run_agents_flow.bat TODOS
 ```
 
 Tambien se puede ejecutar solo el subflujo de login:

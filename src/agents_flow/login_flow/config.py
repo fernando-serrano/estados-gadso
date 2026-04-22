@@ -7,7 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 load_dotenv(BASE_DIR / ".env")
 
 
@@ -62,6 +62,8 @@ class Settings:
     headless: bool
     hold_browser_open: bool
     ocr_max_intentos: int
+    login_captcha_retries: int
+    force_first_captcha: str
     login_validation_timeout_ms: int
     logs_dir: Path
     screenshots_dir: Path
@@ -81,6 +83,8 @@ def load_settings() -> Settings:
             fallback="HOLD_BROWSER_OPEN",
         ),
         ocr_max_intentos=max(1, int_env("SUCAMEC_OCR_MAX_INTENTOS", 4, fallback="CARNET_OCR_MAX_INTENTOS")),
+        login_captcha_retries=max(1, int_env("SUCAMEC_LOGIN_CAPTCHA_RETRIES", 3)),
+        force_first_captcha=str_env("SUCAMEC_FORCE_FIRST_CAPTCHA", ""),
         login_validation_timeout_ms=max(
             1000,
             int_env(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
 from .config import Settings, bool_env, int_env
@@ -54,10 +56,23 @@ def open_browser(playwright: Playwright, settings: Settings) -> tuple[Browser, B
     return browser, context, page
 
 
-def close_browser(browser: Browser | None, context: BrowserContext | None, keep_open: bool = False) -> None:
+def close_browser(
+    browser: Browser | None,
+    context: BrowserContext | None,
+    keep_open: bool = False,
+    logger: logging.Logger | None = None,
+) -> None:
     if keep_open:
         return
-    if context is not None:
-        context.close()
-    if browser is not None:
-        browser.close()
+    try:
+        if context is not None:
+            context.close()
+    except Exception:
+        pass
+    try:
+        if browser is not None:
+            browser.close()
+    except Exception:
+        pass
+    if logger is not None:
+        logger.info("Navegador cerrado")

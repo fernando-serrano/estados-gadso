@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import warnings
 from io import BytesIO
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -9,6 +10,12 @@ from playwright.sync_api import Page
 
 from .config import Credentials, Settings
 from .selectors import ERROR_SELECTORS, LOGIN_SELECTORS, SUCCESS_SELECTORS
+
+warnings.filterwarnings(
+    "ignore",
+    message="'pin_memory' argument is set as true but no accelerator is found.*",
+    category=UserWarning,
+)
 
 OCR_READER = None
 NUMPY_MODULE = None
@@ -24,7 +31,13 @@ def get_ocr_reader():
     except Exception:
         return None, None
 
-    OCR_READER = easyocr.Reader(["en"], gpu=False, verbose=False)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="'pin_memory' argument is set as true but no accelerator is found.*",
+            category=UserWarning,
+        )
+        OCR_READER = easyocr.Reader(["en"], gpu=False, verbose=False)
     NUMPY_MODULE = np
     return OCR_READER, NUMPY_MODULE
 
@@ -49,6 +62,17 @@ def write_input(page: Page, selector: str, value: str) -> None:
             'el.dispatchEvent(new Event("change", {bubbles:true})); }'
         )
         field.blur()
+
+
+def fill_credentials(page: Page, credentials: Credentials, grupo: str, logger: logging.Logger) -> None:
+    page.locator(LOGIN_SELECTORS["numero_documento"]).wait_for(state="visible", timeout=9000)
+    page.select_option(LOGIN_SELECTORS["tipo_doc_select"], value=credentials.tipo_documento_valor)
+    page.wait_for_timeout(200)
+
+    write_input(page, LOGIN_SELECTORS["numero_documento"], credentials.numero_documento)
+    write_input(page, LOGIN_SELECTORS["usuario"], credentials.usuario)
+    write_input(page, LOGIN_SELECTORS["clave"], credentials.contrasena)
+    logger.info("[%s] Credenciales cargadas", grupo)
 
 
 def activate_traditional_tab(page: Page) -> None:
@@ -116,12 +140,18 @@ def read_captcha_from_image(image: Image.Image) -> str:
     if reader is None or np_module is None:
         return ""
     try:
-        result = reader.readtext(
-            np_module.array(image),
-            detail=0,
-            paragraph=False,
-            allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="'pin_memory' argument is set as true but no accelerator is found.*",
+                category=UserWarning,
+            )
+            result = reader.readtext(
+                np_module.array(image),
+                detail=0,
+                paragraph=False,
+                allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+            )
     except Exception:
         return ""
     return clean_captcha_text(" ".join(str(item or "") for item in result))
@@ -151,6 +181,39 @@ def solve_captcha(page: Page, logger: logging.Logger, max_attempts: int) -> str:
             pass
 
     raise RuntimeError(f"No se pudo resolver captcha tras {max_attempts} intentos")
+
+
+def refresh_captcha(page: Page, logger: logging.Logger) -> None:
+    try:
+        captcha_img = page.locator(LOGIN_SELECTORS["captcha_img"]).first
+        previous_src = captcha_img.get_attribute("src", timeout=1500) or ""
+    except Exception:
+        previous_src = ""
+
+    button = page.locator(LOGIN_SELECTORS["boton_refresh"]).first
+    button.wait_for(state="visible", timeout=8000)
+    button.click(timeout=8000)
+
+    try:
+        page.wait_for_function(
+            """([selector, previousSrc]) => {
+                const img = document.querySelector(selector);
+                if (!img) return false;
+                const src = img.getAttribute('src') || '';
+                return src && src !== previousSrc && img.complete;
+            }""",
+            [LOGIN_SELECTORS["captcha_img"], previous_src],
+            timeout=3500,
+        )
+    except Exception:
+        page.wait_for_timeout(500)
+
+    logger.info("Captcha refrescado")
+
+
+def is_captcha_error(error_message: str | None) -> bool:
+    text = clean_captcha_text(error_message or "")
+    return "CAPTCHA" in text and ("INCORRECTO" in text or "INVALIDO" in text)
 
 
 def validate_login_result(page: Page, timeout_ms: int) -> tuple[bool, str | None, float]:
@@ -185,29 +248,56 @@ def validate_login_result(page: Page, timeout_ms: int) -> tuple[bool, str | None
 
 
 def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, logger: logging.Logger) -> None:
+    started_at = time.time()
     credentials.validate(grupo)
     logger.info("[%s] Navegando a login", grupo)
     page.goto(settings.login_url, wait_until="domcontentloaded", timeout=45000)
     wait_until_service_available(page, settings.login_url)
 
     activate_traditional_tab(page)
-    page.locator(LOGIN_SELECTORS["numero_documento"]).wait_for(state="visible", timeout=9000)
 
-    page.select_option(LOGIN_SELECTORS["tipo_doc_select"], value=credentials.tipo_documento_valor)
-    page.wait_for_timeout(300)
+    validation_elapsed = 0.0
+    for login_attempt in range(1, settings.login_captcha_retries + 1):
+        if login_attempt > 1:
+            logger.info(
+                "[%s] Reintentando login por captcha incorrecto (%s/%s)",
+                grupo,
+                login_attempt,
+                settings.login_captcha_retries,
+            )
+            try:
+                activate_traditional_tab(page)
+            except Exception:
+                pass
+            refresh_captcha(page, logger)
 
-    write_input(page, LOGIN_SELECTORS["numero_documento"], credentials.numero_documento)
-    write_input(page, LOGIN_SELECTORS["usuario"], credentials.usuario)
-    write_input(page, LOGIN_SELECTORS["clave"], credentials.contrasena)
-    logger.info("[%s] Credenciales cargadas", grupo)
+        fill_credentials(page, credentials, grupo, logger)
+        forced_captcha = clean_captcha_text(settings.force_first_captcha)
+        if login_attempt == 1 and forced_captcha:
+            captcha_text = forced_captcha
+            logger.info("[%s] Captcha forzado para prueba en primer intento", grupo)
+        else:
+            captcha_text = solve_captcha(page, logger, settings.ocr_max_intentos)
+        write_input(page, LOGIN_SELECTORS["captcha_input"], captcha_text)
+        logger.info("[%s] Captcha escrito automaticamente", grupo)
 
-    captcha_text = solve_captcha(page, logger, settings.ocr_max_intentos)
-    write_input(page, LOGIN_SELECTORS["captcha_input"], captcha_text)
-    logger.info("[%s] Captcha escrito automaticamente", grupo)
+        page.locator(LOGIN_SELECTORS["ingresar"]).click(timeout=10000)
+        ok, error_message, validation_elapsed = validate_login_result(
+            page,
+            settings.login_validation_timeout_ms,
+        )
+        if ok:
+            break
 
-    page.locator(LOGIN_SELECTORS["ingresar"]).click(timeout=10000)
-    ok, error_message, elapsed = validate_login_result(page, settings.login_validation_timeout_ms)
-    if not ok:
+        if is_captcha_error(error_message) and login_attempt < settings.login_captcha_retries:
+            logger.warning("[%s] Captcha rechazado por SUCAMEC: %s", grupo, error_message)
+            continue
+
         raise RuntimeError(f"[{grupo}] Login fallido: {error_message}")
 
-    logger.info("[%s] Login exitoso en %.2fs", grupo, elapsed)
+    logger.info(
+        "[%s] Login exitoso en %.2fs (validacion UI: %.2fs)",
+        grupo,
+        time.time() - started_at,
+        validation_elapsed,
+    )

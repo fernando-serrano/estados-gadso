@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import time
 
 from playwright.sync_api import sync_playwright
 
@@ -35,11 +34,25 @@ def run_login_for_group(grupo: str) -> None:
             logger.info("[%s] URL post-login: %s", grupo, page.url)
 
             if settings.hold_browser_open and not settings.headless:
-                logger.info("[%s] Navegador abierto para inspeccion. Cierra con Ctrl+C.", grupo)
-                while True:
-                    time.sleep(60)
+                logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
+                try:
+                    while True:
+                        try:
+                            browser_closed = page.is_closed() or not browser.is_connected()
+                        except Exception:
+                            browser_closed = True
+                        if browser_closed:
+                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
+                            break
+                        try:
+                            page.wait_for_timeout(1000)
+                        except Exception:
+                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
+                            break
+                except KeyboardInterrupt:
+                    logger.info("[%s] Interrupcion manual recibida", grupo)
         finally:
-            close_browser(browser, context, keep_open=settings.hold_browser_open and not settings.headless)
+            close_browser(browser, context, logger=logger)
 
 
 def main() -> int:
