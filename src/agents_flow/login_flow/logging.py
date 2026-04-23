@@ -131,28 +131,3 @@ class RunLoggers:
 def build_logger(logs_dir: Path, name: str = "sucamec_estado") -> logging.Logger:
     """Compatibilidad: crea una corrida y retorna un logger para `name`."""
     return RunLoggers(logs_dir).get(name)
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-    logger.handlers.clear()
-
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    log_file = logs_dir / f"{name}_{datetime.now():%Y%m%d_%H%M%S}.log"
-
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-
-    deleted_logs = _prune_old_logs(
-        logs_dir,
-        name=name,
-        keep_files=_max_log_files(),
-        protected_file=log_file,
-    )
-    logger.info("Log inicializado en %s", log_file)
-    if deleted_logs:
-        logger.info("Control de logs aplicado: %s log(s) antiguo(s) eliminado(s)", deleted_logs)
-    return logger

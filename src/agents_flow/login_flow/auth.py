@@ -157,12 +157,19 @@ def read_captcha_from_image(image: Image.Image) -> str:
     return clean_captcha_text(" ".join(str(item or "") for item in result))
 
 
-def solve_captcha(page: Page, logger: logging.Logger, max_attempts: int) -> str:
+def solve_captcha(page: Page, logger: logging.Logger, max_attempts: int, total_timeout_ms: int) -> str:
     reader, _ = get_ocr_reader()
     if reader is None:
         raise RuntimeError("OCR no disponible. Instala easyocr, pillow y numpy.")
 
+    started_at = time.time()
     for attempt in range(1, max_attempts + 1):
+        elapsed_ms = (time.time() - started_at) * 1000
+        if elapsed_ms >= total_timeout_ms:
+            raise RuntimeError(
+                f"No se pudo resolver captcha dentro del timeout total ({int(total_timeout_ms)} ms)"
+            )
+
         image_locator = page.locator(LOGIN_SELECTORS["captcha_img"])
         image_locator.wait_for(state="visible", timeout=12000)
         image_bytes = image_locator.screenshot()
@@ -277,7 +284,12 @@ def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, 
             captcha_text = forced_captcha
             logger.info("[%s] Captcha forzado para prueba en primer intento", grupo)
         else:
-            captcha_text = solve_captcha(page, logger, settings.ocr_max_intentos)
+            captcha_text = solve_captcha(
+                page,
+                logger,
+                settings.ocr_max_intentos,
+                settings.captcha_solve_timeout_ms,
+            )
         write_input(page, LOGIN_SELECTORS["captcha_input"], captcha_text)
         logger.info("[%s] Captcha escrito automaticamente", grupo)
 

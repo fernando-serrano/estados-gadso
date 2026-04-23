@@ -22,6 +22,19 @@ from src.agents_flow.login_flow.logging import RunLoggers
 from src.agents_flow.mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
 
 
+def _build_failed_batch_results(records: list[InputRecord], error_message: str) -> list[SearchResult]:
+    return [
+        SearchResult(
+            documento=record.dni,
+            tipo_documento="DNI",
+            nombre=record.apellidos_nombres,
+            estado="WORKER_ERROR",
+            empresa=error_message,
+        )
+        for record in records
+    ]
+
+
 def _load_records(settings, excel_logger) -> list[InputRecord]:
     entrada_dir = ensure_data_dirs(settings.logs_dir.parent)
     input_excel = resolve_input_excel(entrada_dir, explicit_path=settings.input_excel_path)
@@ -74,6 +87,29 @@ def _configure_worker_browser_env(worker_id: int, total_workers: int) -> None:
     os.environ["BROWSER_TILE_INDEX"] = str(max(0, worker_id - 1))
 
 
+def _wait_for_browser_close_if_needed(page, browser, settings, grupo: str, logger) -> None:
+    if not settings.hold_browser_open or settings.headless:
+        return
+
+    logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
+    try:
+        while True:
+            try:
+                browser_closed = page.is_closed() or not browser.is_connected()
+            except Exception:
+                browser_closed = True
+            if browser_closed:
+                logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
+                break
+            try:
+                page.wait_for_timeout(1000)
+            except Exception:
+                logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
+                break
+    except KeyboardInterrupt:
+        logger.info("[%s] Interrupcion manual recibida", grupo)
+
+
 def _run_single_browser_batch(
     grupo: str,
     settings,
@@ -113,24 +149,8 @@ def _run_single_browser_batch(
             )
             results = process_records_in_mis_vigilantes(page, records, mis_vigilantes_logger)
 
-            if keep_browser_open and settings.hold_browser_open and not settings.headless:
-                logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
-                try:
-                    while True:
-                        try:
-                            browser_closed = page.is_closed() or not browser.is_connected()
-                        except Exception:
-                            browser_closed = True
-                        if browser_closed:
-                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
-                            break
-                        try:
-                            page.wait_for_timeout(1000)
-                        except Exception:
-                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
-                            break
-                except KeyboardInterrupt:
-                    logger.info("[%s] Interrupcion manual recibida", grupo)
+            if keep_browser_open:
+                _wait_for_browser_close_if_needed(page, browser, settings, grupo, logger)
 
             return results
         finally:
@@ -168,25 +188,7 @@ def _run_solo_login(grupo: str, settings, run_name: str) -> None:
             browser, context, page = open_browser(playwright, settings)
             login(page, settings, credentials_for_group(grupo), grupo, logger)
             logger.info("[%s] URL post-login: %s", grupo, page.url)
-
-            if settings.hold_browser_open and not settings.headless:
-                logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)
-                try:
-                    while True:
-                        try:
-                            browser_closed = page.is_closed() or not browser.is_connected()
-                        except Exception:
-                            browser_closed = True
-                        if browser_closed:
-                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
-                            break
-                        try:
-                            page.wait_for_timeout(1000)
-                        except Exception:
-                            logger.info("[%s] Ventana del navegador cerrada por el usuario", grupo)
-                            break
-                except KeyboardInterrupt:
-                    logger.info("[%s] Interrupcion manual recibida", grupo)
+            _wait_for_browser_close_if_needed(page, browser, settings, grupo, logger)
         finally:
             close_browser(browser, context, logger=logger)
             run_loggers.close()
@@ -216,7 +218,7 @@ def _run_multiworker(grupo: str, settings, run_name: str, records: list[InputRec
 
         results_by_batch: dict[int, list[SearchResult]] = {}
         with ProcessPoolExecutor(max_workers=len(batches)) as executor:
-            futures = [
+            futures = {
                 executor.submit(
                     _run_worker_batch,
                     grupo,
@@ -225,18 +227,37 @@ def _run_multiworker(grupo: str, settings, run_name: str, records: list[InputRec
                     batch_index,
                     len(batches),
                     batch,
-                )
+                ): (batch_index, batch)
                 for batch_index, batch in enumerate(batches)
-            ]
+            }
             for future in as_completed(futures):
-                batch_index, batch_results = future.result()
-                results_by_batch[batch_index] = batch_results
-                orchestration_logger.info(
-                    "[%s] Worker %s completado | resultados=%s",
-                    grupo,
-                    batch_index + 1,
-                    len(batch_results),
-                )
+                batch_index, batch = futures[future]
+                try:
+                    completed_batch_index, batch_results = future.result()
+                    results_by_batch[completed_batch_index] = batch_results
+                    orchestration_logger.info(
+                        "[%s] Worker %s completado | resultados=%s",
+                        grupo,
+                        completed_batch_index + 1,
+                        len(batch_results),
+                    )
+                except Exception as exc:
+                    error_message = f"{type(exc).__name__}: {exc}"
+                    orchestration_logger.exception(
+                        "[%s] Worker %s fallo | filas %s-%s | error=%s",
+                        grupo,
+                        batch_index + 1,
+                        batch[0].row_number,
+                        batch[-1].row_number,
+                        error_message,
+                    )
+                    results_by_batch[batch_index] = _build_failed_batch_results(batch, error_message)
+                    orchestration_logger.info(
+                        "[%s] Worker %s marcado como fallido | resultados_sustituidos=%s",
+                        grupo,
+                        batch_index + 1,
+                        len(results_by_batch[batch_index]),
+                    )
 
         ordered_results: list[SearchResult] = []
         for batch_index in range(len(batches)):

@@ -62,6 +62,7 @@ class Settings:
     headless: bool
     hold_browser_open: bool
     ocr_max_intentos: int
+    captcha_solve_timeout_ms: int
     login_captcha_retries: int
     force_first_captcha: str
     login_validation_timeout_ms: int
@@ -89,6 +90,7 @@ def load_settings() -> Settings:
             fallback="HOLD_BROWSER_OPEN",
         ),
         ocr_max_intentos=max(1, int_env("SUCAMEC_OCR_MAX_INTENTOS", 4, fallback="CARNET_OCR_MAX_INTENTOS")),
+        captcha_solve_timeout_ms=max(5000, int_env("SUCAMEC_CAPTCHA_SOLVE_TIMEOUT_MS", 120000)),
         login_captcha_retries=max(1, int_env("SUCAMEC_LOGIN_CAPTCHA_RETRIES", 3)),
         force_first_captcha=str_env("SUCAMEC_FORCE_FIRST_CAPTCHA", ""),
         login_validation_timeout_ms=max(

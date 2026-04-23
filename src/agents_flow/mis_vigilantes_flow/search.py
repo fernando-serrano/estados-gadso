@@ -12,21 +12,10 @@ from src.agents_flow.extraction_flow import (
     extract_license_fields,
 )
 from src.agents_flow.excel_flow import InputRecord, SearchResult
+from src.agents_flow.login_flow.auth import write_input
 
 from .navigation import navigate_to_mis_vigilantes, wait_primefaces_ajax
 from .selectors import VIEW_SELECTORS
-
-
-def _write_input(page: Page, selector: str, value: str) -> None:
-    field = page.locator(selector).first
-    field.wait_for(state="visible", timeout=12000)
-    field.click()
-    field.fill(value)
-    field.evaluate(
-        'el => { el.dispatchEvent(new Event("input", {bubbles:true})); '
-        'el.dispatchEvent(new Event("change", {bubbles:true})); }'
-    )
-    field.blur()
 
 
 def _wait_for_search_response(page: Page, timeout_ms: int = 9000) -> None:
@@ -94,7 +83,7 @@ def return_to_search_view(page: Page, logger: logging.Logger) -> None:
 def search_record_and_open_detail(page: Page, record: InputRecord, logger: logging.Logger) -> SearchResult:
     logger.info("[FILA %s] Buscando DNI=%s", record.row_number, record.dni)
 
-    _write_input(page, VIEW_SELECTORS["criterio_busqueda"], record.dni)
+    write_input(page, VIEW_SELECTORS["criterio_busqueda"], record.dni)
     page.locator(VIEW_SELECTORS["boton_buscar"]).first.click(timeout=10000)
     _wait_for_search_response(page)
 
@@ -151,10 +140,11 @@ def process_records_in_mis_vigilantes(
     logger: logging.Logger,
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
+    if records:
+        navigate_to_mis_vigilantes(page, logger)
 
     for index, record in enumerate(records, start=1):
         logger.info("Procesando registro %s/%s", index, len(records))
-        navigate_to_mis_vigilantes(page, logger)
         results.append(search_record_and_open_detail(page, record, logger))
 
     return results

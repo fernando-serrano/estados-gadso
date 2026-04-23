@@ -71,6 +71,7 @@ Variables SUCAMEC usadas por el flujo actual:
 
 ```env
 SUCAMEC_LOGIN_CAPTCHA_RETRIES=3
+SUCAMEC_CAPTCHA_SOLVE_TIMEOUT_MS=120000
 SUCAMEC_FORCE_FIRST_CAPTCHA=
 SUCAMEC_LOGIN_VALIDATION_TIMEOUT_MS=12000
 SUCAMEC_LOG_MAX_RUNS=10
@@ -134,7 +135,7 @@ El flujo implementado hace:
 10. El orquestador central carga los registros una sola vez y aplica `SUCAMEC_MAX_RECORDS` si corresponde.
 11. Si `SCHEDULED_MULTIWORKER=1`, divide los registros en lotes para workers; si no, ejecuta un solo worker.
 12. Cada worker inicia una sola sesion, procesa su lote completo y evita recargar el Excel desde cero.
-13. Para cada DNI, busca el registro y abre el enlace `Ver` cuando existe.
+13. Cada worker navega a `MIS VIGILANTES` una vez por lote y luego procesa los registros de forma secuencial dentro de esa vista.
 14. Extrae los datos base del vigilante desde la vista de detalle.
 15. Extrae los 2 primeros registros reales de la tabla de cursos.
 16. Extrae el primer registro real de la tabla de licencia.
@@ -186,6 +187,7 @@ Configuracion de workers:
 - `SCHEDULED_WORKERS` define el numero base de workers concurrentes.
 - `CARNET_WORKER_MAX_ROWS`, cuando es mayor que `0`, incrementa el numero efectivo de workers si hace falta para no exceder ese tamano aproximado por lote.
 - El Excel de entrada se carga una sola vez en el proceso orquestador; los workers reciben solo sus segmentos ya particionados.
+- `SUCAMEC_CAPTCHA_SOLVE_TIMEOUT_MS` define el timeout total para resolver captcha por OCR dentro de un intento de login.
 - `CARNET_HEADLESS=1` ejecuta los navegadores ocultos.
 - Si `CARNET_HEADLESS=1`, el flujo desactiva internamente `HOLD_BROWSER_OPEN` para evitar retenciones incompatibles con ejecucion sin UI.
 
@@ -272,6 +274,7 @@ Captcha:
 - OCR con `easyocr`, `Pillow` y `numpy`.
 - Preprocesamiento de imagen en variantes.
 - Reintentos internos de OCR por imagen.
+- Timeout total configurable por intento de resolucion mediante `SUCAMEC_CAPTCHA_SOLVE_TIMEOUT_MS`.
 - Reintentos de login si SUCAMEC rechaza el captcha.
 - `SUCAMEC_FORCE_FIRST_CAPTCHA=ABCDE` puede usarse para probar el camino de recuperacion; debe dejarse vacio en uso normal.
 
@@ -295,6 +298,7 @@ Busqueda por DNI:
 - Escribe el DNI en `buscarForm:j_idt32`.
 - Acciona `buscarForm:botonBuscar`.
 - Espera la tabla `table[role='grid']`.
+- La navegacion a `MIS VIGILANTES` se realiza una sola vez por lote, no antes de cada registro.
 - Si la tabla devuelve la fila PrimeFaces `tr.ui-datatable-empty-message` con el texto `No se encontraron resultados.`, marca el registro como `NO_ENCONTRADO` de forma temprana.
 - Si existe enlace `Ver`, hace click sobre el primer resultado.
 - Si no existe enlace `Ver` y tampoco se pudo confirmar el empty-state de la tabla, usa una validacion de respaldo sobre el texto visible de la pagina.
@@ -328,6 +332,7 @@ Excel local:
 - Crea `data/entrada_data` si no existe.
 - Lee solo archivos `.xlsx` y omite temporales `~$`.
 - Toma el archivo mas reciente si no se configura ruta explicita.
+- Cierra explicitamente los workbooks al terminar lectura y escritura para reducir riesgo de bloqueos de archivo.
 - Escribe el resultado final en `lotes/<aaaammdd_hhmmss>/RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
 - El Excel final ya incluye todas las columnas implementadas hasta la fecha y esta ordenado por bloques funcionales:
 - Datos base: `documento`, `tipo_documento`, `nombre`, `estado`, `nro_carne`, `modalidad`, `ruc`, `expediente`, `nro_expediente`, `anho_expediente`, `fecha_emision`, `fecha_vencimiento`, `empresa`.

@@ -33,7 +33,7 @@ python -m src.agents_flow.cli --grupo %GRUPO% %EXTRA_ARG%
 set "EXIT_CODE=%ERRORLEVEL%"
 echo [INFO] Flujo finalizado con codigo: %EXIT_CODE%
 
-pause
+if not "%EXIT_CODE%"=="0" pause
 exit /b %EXIT_CODE%
 
 :help

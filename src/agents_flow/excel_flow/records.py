@@ -131,38 +131,41 @@ def _cell_to_text_preserving_zeros(cell) -> str:
 
 def load_input_records(input_excel: Path, logger: logging.Logger) -> list[InputRecord]:
     workbook = load_workbook(input_excel, read_only=False, data_only=True)
-    sheet = workbook.active
+    try:
+        sheet = workbook.active
 
-    header_cells = next(sheet.iter_rows(min_row=1, max_row=1), None)
-    if not header_cells:
-        raise ValueError("El Excel de entrada no tiene cabecera")
+        header_cells = next(sheet.iter_rows(min_row=1, max_row=1), None)
+        if not header_cells:
+            raise ValueError("El Excel de entrada no tiene cabecera")
 
-    headers = {_normalize_header(cell.value): index for index, cell in enumerate(header_cells)}
-    dni_index = headers.get("DNI")
-    name_index = headers.get("APELLIDOS Y NOMBRES")
+        headers = {_normalize_header(cell.value): index for index, cell in enumerate(header_cells)}
+        dni_index = headers.get("DNI")
+        name_index = headers.get("APELLIDOS Y NOMBRES")
 
-    if dni_index is None or name_index is None:
-        raise ValueError("El Excel debe contener las columnas exactas: DNI, APELLIDOS Y NOMBRES")
+        if dni_index is None or name_index is None:
+            raise ValueError("El Excel debe contener las columnas exactas: DNI, APELLIDOS Y NOMBRES")
 
-    records: list[InputRecord] = []
-    for row_number, row in enumerate(sheet.iter_rows(min_row=2), start=2):
-        dni = _cell_to_text_preserving_zeros(row[dni_index])
-        apellidos_nombres = _cell_to_text_preserving_zeros(row[name_index])
-        if not dni and not apellidos_nombres:
-            continue
-        if not dni:
-            logger.warning("[FILA %s] Registro omitido: DNI vacio", row_number)
-            continue
-        records.append(
-            InputRecord(
-                row_number=row_number,
-                dni=dni,
-                apellidos_nombres=apellidos_nombres,
+        records: list[InputRecord] = []
+        for row_number, row in enumerate(sheet.iter_rows(min_row=2), start=2):
+            dni = _cell_to_text_preserving_zeros(row[dni_index])
+            apellidos_nombres = _cell_to_text_preserving_zeros(row[name_index])
+            if not dni and not apellidos_nombres:
+                continue
+            if not dni:
+                logger.warning("[FILA %s] Registro omitido: DNI vacio", row_number)
+                continue
+            records.append(
+                InputRecord(
+                    row_number=row_number,
+                    dni=dni,
+                    apellidos_nombres=apellidos_nombres,
+                )
             )
-        )
 
-    logger.info("Excel de entrada cargado: %s | registros=%s", input_excel, len(records))
-    return records
+        logger.info("Excel de entrada cargado: %s | registros=%s", input_excel, len(records))
+        return records
+    finally:
+        workbook.close()
 
 
 def write_search_results(output_dir: Path, results: list[SearchResult], logger: logging.Logger) -> Path:
@@ -170,20 +173,23 @@ def write_search_results(output_dir: Path, results: list[SearchResult], logger: 
     output_path = output_dir / f"RB_GADSOCarnetSUCAMEC_{datetime.now():%d.%m.%y_%H.%M.%S}.xlsx"
 
     workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "resultados"
-    sheet.append(OUTPUT_FIELDS)
+    try:
+        sheet = workbook.active
+        sheet.title = "resultados"
+        sheet.append(OUTPUT_FIELDS)
 
-    for result in results:
-        sheet.append([getattr(result, field) for field in OUTPUT_FIELDS])
+        for result in results:
+            sheet.append([getattr(result, field) for field in OUTPUT_FIELDS])
 
-    for column_cells in sheet.columns:
-        max_length = max(len(str(cell.value or "")) for cell in column_cells)
-        column_letter = column_cells[0].column_letter
-        sheet.column_dimensions[column_letter].width = min(max(12, max_length + 2), 35)
-        for cell in column_cells:
-            cell.number_format = "@"
+        for column_cells in sheet.columns:
+            max_length = max(len(str(cell.value or "")) for cell in column_cells)
+            column_letter = column_cells[0].column_letter
+            sheet.column_dimensions[column_letter].width = min(max(12, max_length + 2), 35)
+            for cell in column_cells:
+                cell.number_format = "@"
 
-    workbook.save(output_path)
-    logger.info("Resultado RB_GADSOCarnetSUCAMEC guardado en %s", output_path)
-    return output_path
+        workbook.save(output_path)
+        logger.info("Resultado RB_GADSOCarnetSUCAMEC guardado en %s", output_path)
+        return output_path
+    finally:
+        workbook.close()
