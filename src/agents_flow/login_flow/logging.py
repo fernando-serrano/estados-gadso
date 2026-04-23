@@ -44,11 +44,16 @@ def _console_handler() -> logging.StreamHandler:
     return handler
 
 
-def build_subflow_logger(run_dir: Path, subflow_name: str, console_handler: logging.Handler | None = None) -> logging.Logger:
-    log_dir = run_dir / subflow_name
+def build_subflow_logger(
+    base_dir: Path,
+    subflow_name: str,
+    console_handler: logging.Handler | None = None,
+    logger_prefix: str = "",
+) -> logging.Logger:
+    log_dir = base_dir
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    logger_name = f"{run_dir.name}.{subflow_name}"
+    logger_name = ".".join(part for part in [logger_prefix, subflow_name] if part)
     logger = logging.getLogger(logger_name)
     logger.setLevel(logging.INFO)
     logger.propagate = False
@@ -69,12 +74,15 @@ def build_subflow_logger(run_dir: Path, subflow_name: str, console_handler: logg
 
 
 class RunLoggers:
-    def __init__(self, logs_dir: Path, run_name: str | None = None):
+    def __init__(self, logs_dir: Path, run_name: str | None = None, scope_name: str | None = None):
         logs_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir = logs_dir
         self.run_name = run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_dir = logs_dir / self.run_name
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.scope_name = str(scope_name or "").strip()
+        self.scope_dir = self.run_dir / self.scope_name if self.scope_name else self.run_dir
+        self.scope_dir.mkdir(parents=True, exist_ok=True)
         self.console_handler = _console_handler()
         self._loggers: dict[str, logging.Logger] = {}
 
@@ -88,9 +96,10 @@ class RunLoggers:
     def get(self, subflow_name: str) -> logging.Logger:
         if subflow_name not in self._loggers:
             self._loggers[subflow_name] = build_subflow_logger(
-                self.run_dir,
+                self.scope_dir,
                 subflow_name,
                 console_handler=self.console_handler,
+                logger_prefix=".".join(part for part in [self.run_name, self.scope_name] if part),
             )
             if self._deleted_dirs and not self._retention_logged:
                 self._loggers[subflow_name].info(

@@ -66,9 +66,13 @@ class Settings:
     force_first_captcha: str
     login_validation_timeout_ms: int
     logs_dir: Path
+    lots_dir: Path
     screenshots_dir: Path
     input_excel_path: str
     max_records: int
+    scheduled_multiworker: bool
+    scheduled_workers: int
+    worker_max_rows: int
 
 
 def load_settings() -> Settings:
@@ -96,9 +100,13 @@ def load_settings() -> Settings:
             ),
         ),
         logs_dir=BASE_DIR / str_env("LOG_DIR", "logs"),
+        lots_dir=BASE_DIR / "lotes",
         screenshots_dir=BASE_DIR / str_env("SCREENSHOT_DIR", "screenshots"),
         input_excel_path=str_env("SUCAMEC_INPUT_EXCEL", ""),
         max_records=max(0, int_env("SUCAMEC_MAX_RECORDS", 0)),
+        scheduled_multiworker=bool_env("SCHEDULED_MULTIWORKER", default=False),
+        scheduled_workers=max(1, int_env("SCHEDULED_WORKERS", 1)),
+        worker_max_rows=max(0, int_env("CARNET_WORKER_MAX_ROWS", 0)),
     )
 
 

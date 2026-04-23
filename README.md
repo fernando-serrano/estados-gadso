@@ -60,6 +60,7 @@ Configuracion operativa recomendada para pruebas visibles:
 RUN_MODE=manual
 SCHEDULED_MULTIWORKER=0
 SCHEDULED_WORKERS=1
+CARNET_WORKER_MAX_ROWS=0
 CARNET_HEADLESS=0
 HOLD_BROWSER_OPEN=1
 BROWSER_KEEP_VISIBLE=1
@@ -83,6 +84,7 @@ Variables heredadas que tambien se respetan:
 CARNET_HEADLESS=0
 HOLD_BROWSER_OPEN=1
 CARNET_OCR_MAX_INTENTOS=6
+CARNET_WORKER_MAX_ROWS=0
 LOGIN_VALIDATION_TIMEOUT_MS=12000
 LOG_DIR=logs
 SCREENSHOT_DIR=screenshots
@@ -129,15 +131,17 @@ El flujo implementado hace:
 7. Valida sesion autenticada.
 8. Navega a `CONSULTAS > MIS VIGILANTES`.
 9. Lee el Excel local desde `data/entrada_data`.
-10. Itera los registros y busca cada DNI.
-11. Si encuentra resultado, abre el enlace `Ver`.
-12. Extrae los datos base del vigilante desde la vista de detalle.
-13. Extrae los 2 primeros registros reales de la tabla de cursos.
-14. Extrae el primer registro real de la tabla de licencia.
-15. Extrae los 2 primeros registros reales de la tabla de historial.
-16. Consolida toda la informacion en un unico registro por DNI.
-17. Guarda el Excel final dentro de la carpeta de la corrida en `logs/<fecha_hora>/excel_flow`.
-18. Deja el navegador visible si `HOLD_BROWSER_OPEN=1`.
+10. El orquestador central carga los registros una sola vez y aplica `SUCAMEC_MAX_RECORDS` si corresponde.
+11. Si `SCHEDULED_MULTIWORKER=1`, divide los registros en lotes para workers; si no, ejecuta un solo worker.
+12. Cada worker inicia una sola sesion, procesa su lote completo y evita recargar el Excel desde cero.
+13. Para cada DNI, busca el registro y abre el enlace `Ver` cuando existe.
+14. Extrae los datos base del vigilante desde la vista de detalle.
+15. Extrae los 2 primeros registros reales de la tabla de cursos.
+16. Extrae el primer registro real de la tabla de licencia.
+17. Extrae los 2 primeros registros reales de la tabla de historial.
+18. Consolida toda la informacion en un unico registro por DNI, preservando el orden original de entrada.
+19. Guarda el Excel final dentro de la carpeta de la corrida en `logs/<fecha_hora>/excel_flow`.
+20. En modo single-worker, deja el navegador visible si `HOLD_BROWSER_OPEN=1`.
 
 ## Entrada Excel
 
@@ -175,11 +179,22 @@ SUCAMEC_MAX_RECORDS=5
 
 Con `SUCAMEC_MAX_RECORDS=0` procesa todas las filas.
 
+Configuracion de workers:
+
+- `SCHEDULED_MULTIWORKER=0` ejecuta un solo navegador y un solo lote.
+- `SCHEDULED_MULTIWORKER=1` activa procesamiento paralelo por workers.
+- `SCHEDULED_WORKERS` define el numero base de workers concurrentes.
+- `CARNET_WORKER_MAX_ROWS`, cuando es mayor que `0`, incrementa el numero efectivo de workers si hace falta para no exceder ese tamano aproximado por lote.
+- El Excel de entrada se carga una sola vez en el proceso orquestador; los workers reciben solo sus segmentos ya particionados.
+
 ## Estructura Modular
 
 ```text
 src/agents_flow/
   cli.py
+  orchestration_flow/
+    runner.py     # Orquestador: carga Excel, particiona lotes y consolida resultados
+    __init__.py
   login_flow/
     auth.py       # Login, captcha, reintentos y validacion de sesion
     browser.py    # Apertura/cierre de Chromium
@@ -223,6 +238,7 @@ Buenas practicas aplicadas:
 
 - La consola muestra todos los subflujos unificados.
 - Cada subflujo escribe su propio archivo.
+- En modo multiworker, cada worker escribe sus propios logs de login y busqueda para facilitar trazabilidad por lote.
 - `SUCAMEC_LOG_MAX_RUNS=10` conserva maximo 10 corridas.
 - Al crear la corrida 11, se elimina la carpeta de corrida mas antigua.
 - Los handlers de archivo se cierran al finalizar para evitar bloqueos en Windows.
@@ -265,9 +281,20 @@ Busqueda por DNI:
 - Escribe el DNI en `buscarForm:j_idt32`.
 - Acciona `buscarForm:botonBuscar`.
 - Espera la tabla `table[role='grid']`.
+- Si la tabla devuelve la fila PrimeFaces `tr.ui-datatable-empty-message` con el texto `No se encontraron resultados.`, marca el registro como `NO_ENCONTRADO` de forma temprana.
 - Si existe enlace `Ver`, hace click sobre el primer resultado.
-- Si no existe resultado, marca `NO_ENCONTRADO` en el resumen.
+- Si no existe enlace `Ver` y tampoco se pudo confirmar el empty-state de la tabla, usa una validacion de respaldo sobre el texto visible de la pagina.
+- Si ninguna validacion confirma resultado ni empty-state, marca `SIN_VER` para diferenciar un caso ambiguo de un `NO_ENCONTRADO` confirmado.
 - Antes de cada registro vuelve a asegurar la vista `MIS VIGILANTES`.
+
+Orquestacion y workers:
+
+- La carga del Excel se realiza una sola vez al inicio de la corrida.
+- El orquestador calcula el numero efectivo de workers a partir de `SCHEDULED_MULTIWORKER`, `SCHEDULED_WORKERS` y `CARNET_WORKER_MAX_ROWS`.
+- Los registros se reparten en lotes contiguos para preservar el orden del archivo de entrada.
+- Cada worker abre su propio navegador, realiza login una sola vez y procesa su lote completo.
+- Los resultados parciales se consolidan al final en el proceso padre antes de escribir el Excel.
+- En multiworker no se deja el navegador abierto al finalizar; ese comportamiento se conserva solo para la ruta single-worker de inspeccion.
 
 Extraccion estructurada:
 
@@ -278,6 +305,7 @@ Extraccion estructurada:
 - `history.py` extrae un maximo de 2 registros de historial y genera columnas con sufijos `_1` y `_2`.
 - Los extractores de tablas ignoran filas vacias del `tbody`, por lo que toman los primeros registros reales y no los primeros `tr` vacios.
 - La combinacion final del resultado se realiza en `mis_vigilantes_flow/search.py`, no dentro de los extractores, para mantener separadas la navegacion y la logica de parsing.
+- El esquema consolidado de salida ya esta implementado en `extraction_flow/__init__.py` mediante `OUTPUT_FIELDS` y en `excel_flow/records.py` mediante el dataclass `SearchResult`.
 
 Excel local:
 
@@ -285,7 +313,7 @@ Excel local:
 - Lee solo archivos `.xlsx` y omite temporales `~$`.
 - Toma el archivo mas reciente si no se configura ruta explicita.
 - Escribe el resultado dentro de la carpeta de corrida: `logs/<fecha_hora>/excel_flow/RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
-- El Excel final contiene un esquema consolidado y ordenado por bloques funcionales:
+- El Excel final ya incluye todas las columnas implementadas hasta la fecha y esta ordenado por bloques funcionales:
 - Datos base: `documento`, `tipo_documento`, `nombre`, `estado`, `nro_carne`, `modalidad`, `ruc`, `expediente`, `nro_expediente`, `anho_expediente`, `fecha_emision`, `fecha_vencimiento`, `empresa`.
 - Cursos: `curso_ruc_1`, `curso_razon_social_1`, `curso_evaluacion_1`, `curso_tipo_1`, `curso_fecha_inicio_1`, `curso_fecha_venc_1`, `curso_estado_1`, `curso_ruc_2`, `curso_razon_social_2`, `curso_evaluacion_2`, `curso_tipo_2`, `curso_fecha_inicio_2`, `curso_fecha_venc_2`, `curso_estado_2`.
 - Licencia: `licencia_numero`, `licencia_fecha_emision`, `licencia_fecha_venc`, `licencia_modalidad`, `licencia_restricciones`.
@@ -308,12 +336,15 @@ Excel local:
 - No abrir ni editar el archivo de entrada mientras el bot lo procesa.
 - Revisar logs por subflujo antes de modificar selectores.
 - Para nuevas etapas, crear modulo dedicado antes de tocar el orquestador.
+- Mantener la lectura del Excel y el particionado de lotes en el orquestador, no dentro de los workers.
+- Cada worker debe procesar un lote completo para evitar re-logins por registro.
 
 ## Siguientes Etapas
 
 Pendiente por implementar:
 
 1. Ejecutar validaciones end-to-end con multiples DNIs reales para confirmar el orden visual de cursos, licencia e historial en produccion.
-2. Clasificar formalmente vigencia/en tramite por empresa.
-3. Definir si la fuente definitiva de entrada sera local, Google Drive u otra herramienta.
-4. Definir paralelismo/workers para procesamiento masivo.
+2. Medir la mejora de tiempo obtenida por la deteccion temprana de `NO_ENCONTRADO` via `ui-datatable-empty-message` y ajustar timeouts si aplica.
+3. Medir rendimiento real del modo multiworker y ajustar cantidad de workers segun CPU, red y estabilidad de SUCAMEC.
+4. Clasificar formalmente vigencia/en tramite por empresa.
+5. Definir si la fuente definitiva de entrada sera local, Google Drive u otra herramienta.

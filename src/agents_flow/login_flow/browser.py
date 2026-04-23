@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
@@ -45,9 +46,17 @@ def build_launch_args() -> list[str]:
     return args
 
 
+def resolve_browser_runtime_settings(settings: Settings) -> Settings:
+    """Encapsula reglas de ejecucion del navegador sin mezclar la logica con login/orquestacion."""
+    if settings.headless and settings.hold_browser_open:
+        return replace(settings, hold_browser_open=False)
+    return settings
+
+
 def open_browser(playwright: Playwright, settings: Settings) -> tuple[Browser, BrowserContext, Page]:
+    runtime_settings = resolve_browser_runtime_settings(settings)
     browser = playwright.chromium.launch(
-        headless=settings.headless,
+        headless=runtime_settings.headless,
         slow_mo=0,
         args=build_launch_args(),
     )
