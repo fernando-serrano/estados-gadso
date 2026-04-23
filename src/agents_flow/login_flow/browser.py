@@ -64,6 +64,7 @@ def close_browser(
 ) -> None:
     if keep_open:
         return
+    had_browser = browser is not None or context is not None
     try:
         if context is not None:
             context.close()
@@ -74,5 +75,5 @@ def close_browser(
             browser.close()
     except Exception:
         pass
-    if logger is not None:
+    if logger is not None and had_browser:
         logger.info("Navegador cerrado")

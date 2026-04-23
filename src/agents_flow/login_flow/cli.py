@@ -8,7 +8,13 @@ from .auth import login
 from .browser import close_browser, open_browser
 from .config import credentials_for_group, load_settings
 from .logging import RunLoggers
-from ..mis_vigilantes_flow import navigate_to_mis_vigilantes
+from ..excel_flow import (
+    ensure_data_dirs,
+    load_input_records,
+    resolve_input_excel,
+    write_search_results,
+)
+from ..mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,17 +38,29 @@ def run_login_for_group(grupo: str, solo_login: bool = False) -> None:
     run_loggers = RunLoggers(settings.logs_dir)
     logger = run_loggers.get("login_flow")
     mis_vigilantes_logger = run_loggers.get("mis_vigilantes_flow")
+    excel_logger = run_loggers.get("excel_flow")
     browser = None
     context = None
 
     with sync_playwright() as playwright:
         try:
+            entrada_dir = ensure_data_dirs(settings.logs_dir.parent)
+            records = []
+            if not solo_login:
+                input_excel = resolve_input_excel(entrada_dir, explicit_path=settings.input_excel_path)
+                records = load_input_records(input_excel, excel_logger)
+                if settings.max_records:
+                    records = records[: settings.max_records]
+                    excel_logger.info("Limite SUCAMEC_MAX_RECORDS aplicado: %s", len(records))
+
             browser, context, page = open_browser(playwright, settings)
             login(page, settings, credentials_for_group(grupo), grupo, logger)
             logger.info("[%s] URL post-login: %s", grupo, page.url)
             if not solo_login:
                 navigate_to_mis_vigilantes(page, mis_vigilantes_logger)
                 mis_vigilantes_logger.info("[%s] URL post-MIS VIGILANTES: %s", grupo, page.url)
+                results = process_records_in_mis_vigilantes(page, records, mis_vigilantes_logger)
+                write_search_results(run_loggers.run_dir / "excel_flow", results, excel_logger)
 
             if settings.hold_browser_open and not settings.headless:
                 logger.info("[%s] Navegador abierto para inspeccion. Cierra la ventana o usa Ctrl+C.", grupo)

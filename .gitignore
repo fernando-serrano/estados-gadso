@@ -9,10 +9,14 @@ __pycache__/
 .ruff_cache/
 
 logs/
-data/
 outputs/
 screenshots/
 downloads/
+
+data/*
+!data/.gitkeep
+!data/entrada_data/
+!data/entrada_data/.gitkeep
 
 .idea/
 .vscode/

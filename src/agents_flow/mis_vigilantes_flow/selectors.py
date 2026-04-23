@@ -21,8 +21,18 @@ MENU_SELECTORS = {
 }
 
 VIEW_SELECTORS = {
+    "criterio_busqueda": "#buscarForm\\:j_idt32",
+    "boton_buscar": "#buscarForm\\:botonBuscar",
+    "boton_buscar_vigilantes": "#verForm\\:j_idt201, button:has-text('Buscar vigilantes')",
+    "tabla_resultados": "table[role='grid'], #buscarForm\\:buscarDatatable",
+    "ver_primero": "#buscarForm\\:buscarDatatable\\:0\\:j_idt67, a.ui-commandlink:has-text('Ver')",
+    "fila_sin_resultados": (
+        "#buscarForm\\:buscarDatatable_data tr.ui-datatable-empty-message, "
+        "tr.ui-datatable-empty-message"
+    ),
     "dni_inputs": (
-        'input[id*="dni"], input[id*="Dni"], input[id*="DNI"], '
+        '#buscarForm\\:j_idt32, input[placeholder="Criterio de bÃºsqueda"], '
+        'input[placeholder="Criterio de busqueda"], input[id*="dni"], input[id*="Dni"], input[id*="DNI"], '
         'input[name*="dni"], input[name*="Dni"], input[name*="DNI"]'
     ),
     "buscar_buttons": (

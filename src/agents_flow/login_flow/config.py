@@ -67,6 +67,8 @@ class Settings:
     login_validation_timeout_ms: int
     logs_dir: Path
     screenshots_dir: Path
+    input_excel_path: str
+    max_records: int
 
 
 def load_settings() -> Settings:
@@ -95,6 +97,8 @@ def load_settings() -> Settings:
         ),
         logs_dir=BASE_DIR / str_env("LOG_DIR", "logs"),
         screenshots_dir=BASE_DIR / str_env("SCREENSHOT_DIR", "screenshots"),
+        input_excel_path=str_env("SUCAMEC_INPUT_EXCEL", ""),
+        max_records=max(0, int_env("SUCAMEC_MAX_RECORDS", 0)),
     )
 
 
