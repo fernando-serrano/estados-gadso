@@ -61,8 +61,8 @@ RUN_MODE=manual
 SCHEDULED_MULTIWORKER=0
 SCHEDULED_WORKERS=1
 CARNET_WORKER_MAX_ROWS=0
-CARNET_HEADLESS=0
-HOLD_BROWSER_OPEN=1
+CARNET_HEADLESS=1
+HOLD_BROWSER_OPEN=0
 BROWSER_KEEP_VISIBLE=1
 BROWSER_TILE_ENABLE=0
 ```
@@ -81,8 +81,8 @@ SUCAMEC_MAX_RECORDS=0
 Variables heredadas que tambien se respetan:
 
 ```env
-CARNET_HEADLESS=0
-HOLD_BROWSER_OPEN=1
+CARNET_HEADLESS=1
+HOLD_BROWSER_OPEN=0
 CARNET_OCR_MAX_INTENTOS=6
 CARNET_WORKER_MAX_ROWS=0
 LOGIN_VALIDATION_TIMEOUT_MS=12000
@@ -140,8 +140,8 @@ El flujo implementado hace:
 16. Extrae el primer registro real de la tabla de licencia.
 17. Extrae los 2 primeros registros reales de la tabla de historial.
 18. Consolida toda la informacion en un unico registro por DNI, preservando el orden original de entrada.
-19. Guarda el Excel final dentro de la carpeta de la corrida en `logs/<fecha_hora>/excel_flow`.
-20. En modo single-worker, deja el navegador visible si `HOLD_BROWSER_OPEN=1`.
+19. Guarda el Excel final en la raiz del proyecto, dentro de `lotes/<aaaammdd_hhmmss>/`.
+20. Si el navegador corre en modo oculto (`headless`), la retencion visual se desactiva automaticamente sin afectar login, navegacion ni scraping.
 
 ## Entrada Excel
 
@@ -186,6 +186,8 @@ Configuracion de workers:
 - `SCHEDULED_WORKERS` define el numero base de workers concurrentes.
 - `CARNET_WORKER_MAX_ROWS`, cuando es mayor que `0`, incrementa el numero efectivo de workers si hace falta para no exceder ese tamano aproximado por lote.
 - El Excel de entrada se carga una sola vez en el proceso orquestador; los workers reciben solo sus segmentos ya particionados.
+- `CARNET_HEADLESS=1` ejecuta los navegadores ocultos.
+- Si `CARNET_HEADLESS=1`, el flujo desactiva internamente `HOLD_BROWSER_OPEN` para evitar retenciones incompatibles con ejecucion sin UI.
 
 ## Estructura Modular
 
@@ -197,9 +199,9 @@ src/agents_flow/
     __init__.py
   login_flow/
     auth.py       # Login, captcha, reintentos y validacion de sesion
-    browser.py    # Apertura/cierre de Chromium
+    browser.py    # Apertura/cierre de Chromium y reglas de ejecucion headless/visible
     config.py     # Carga .env y settings
-    logging.py    # Logs por corrida y subflujo
+    logging.py    # Logs por corrida, scope y fase
     selectors.py  # Selectores del login
     cli.py        # Orquestacion actual
   mis_vigilantes_flow/
@@ -218,27 +220,38 @@ src/agents_flow/
 
 `example/carnet_emision.py` queda como referencia historica, no como punto principal de ejecucion.
 
-## Logs
+## Logs Y Lotes
 
-Los logs se crean por ejecucion y por subflujo:
+Los logs se crean por ejecucion y se agrupan por scope operativo:
 
 ```text
 logs/
   20260422_113000/
-    login_flow/
-      login_flow.log
-    mis_vigilantes_flow/
-      mis_vigilantes_flow.log
-    excel_flow/
+    coordinador/
+      orchestration_flow.log
       excel_flow.log
-      RB_GADSOCarnetSUCAMEC_22.04.26_12.30.10.xlsx
+    worker_01/
+      login_flow.log
+      mis_vigilantes_flow.log
+    worker_02/
+      login_flow.log
+      mis_vigilantes_flow.log
+```
+
+La salida de lotes se guarda aparte, en la raiz del proyecto:
+
+```text
+lotes/
+  20260422_113000/
+    RB_GADSOCarnetSUCAMEC_22.04.26_12.30.10.xlsx
 ```
 
 Buenas practicas aplicadas:
 
 - La consola muestra todos los subflujos unificados.
-- Cada subflujo escribe su propio archivo.
-- En modo multiworker, cada worker escribe sus propios logs de login y busqueda para facilitar trazabilidad por lote.
+- Los logs del proceso padre quedan en `coordinador/`.
+- Cada worker escribe sus fases en su propia carpeta comun `worker_##`.
+- La carpeta `lotes/<timestamp>/` contiene solo el archivo Excel final de la corrida.
 - `SUCAMEC_LOG_MAX_RUNS=10` conserva maximo 10 corridas.
 - Al crear la corrida 11, se elimina la carpeta de corrida mas antigua.
 - Los handlers de archivo se cierran al finalizar para evitar bloqueos en Windows.
@@ -266,8 +279,9 @@ Navegador:
 
 - Cierre tolerante: si el usuario cierra la ventana, el flujo termina sin exigir `Ctrl+C`.
 - Registra `Navegador cerrado`.
-- Ejecuta visible con `CARNET_HEADLESS=0`.
-- Mantiene ventana para inspeccion con `HOLD_BROWSER_OPEN=1`.
+- Ejecuta oculto con `CARNET_HEADLESS=1` o visible con `CARNET_HEADLESS=0`.
+- La decision visual queda encapsulada en `login_flow/browser.py`, separada de login y orquestacion.
+- Si `headless` esta activo, el flujo desactiva automaticamente `hold_browser_open` en runtime.
 
 Navegacion a Mis Vigilantes:
 
@@ -294,7 +308,9 @@ Orquestacion y workers:
 - Los registros se reparten en lotes contiguos para preservar el orden del archivo de entrada.
 - Cada worker abre su propio navegador, realiza login una sola vez y procesa su lote completo.
 - Los resultados parciales se consolidan al final en el proceso padre antes de escribir el Excel.
-- En multiworker no se deja el navegador abierto al finalizar; ese comportamiento se conserva solo para la ruta single-worker de inspeccion.
+- En multiworker no se deja el navegador abierto al finalizar.
+- El coordinador centraliza la escritura del Excel final en `lotes/<timestamp>/`.
+- La segmentacion de logs se hace por scope: `coordinador/` y `worker_##/`.
 
 Extraccion estructurada:
 
@@ -312,7 +328,7 @@ Excel local:
 - Crea `data/entrada_data` si no existe.
 - Lee solo archivos `.xlsx` y omite temporales `~$`.
 - Toma el archivo mas reciente si no se configura ruta explicita.
-- Escribe el resultado dentro de la carpeta de corrida: `logs/<fecha_hora>/excel_flow/RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
+- Escribe el resultado final en `lotes/<aaaammdd_hhmmss>/RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
 - El Excel final ya incluye todas las columnas implementadas hasta la fecha y esta ordenado por bloques funcionales:
 - Datos base: `documento`, `tipo_documento`, `nombre`, `estado`, `nro_carne`, `modalidad`, `ruc`, `expediente`, `nro_expediente`, `anho_expediente`, `fecha_emision`, `fecha_vencimiento`, `empresa`.
 - Cursos: `curso_ruc_1`, `curso_razon_social_1`, `curso_evaluacion_1`, `curso_tipo_1`, `curso_fecha_inicio_1`, `curso_fecha_venc_1`, `curso_estado_1`, `curso_ruc_2`, `curso_razon_social_2`, `curso_evaluacion_2`, `curso_tipo_2`, `curso_fecha_inicio_2`, `curso_fecha_venc_2`, `curso_estado_2`.
@@ -334,7 +350,7 @@ Excel local:
 - Mantener `SUCAMEC_FORCE_FIRST_CAPTCHA=` vacio salvo pruebas controladas.
 - Mantener los DNIs como texto en Excel.
 - No abrir ni editar el archivo de entrada mientras el bot lo procesa.
-- Revisar logs por subflujo antes de modificar selectores.
+- Revisar logs por scope y fase antes de modificar selectores.
 - Para nuevas etapas, crear modulo dedicado antes de tocar el orquestador.
 - Mantener la lectura del Excel y el particionado de lotes en el orquestador, no dentro de los workers.
 - Cada worker debe procesar un lote completo para evitar re-logins por registro.
@@ -346,5 +362,6 @@ Pendiente por implementar:
 1. Ejecutar validaciones end-to-end con multiples DNIs reales para confirmar el orden visual de cursos, licencia e historial en produccion.
 2. Medir la mejora de tiempo obtenida por la deteccion temprana de `NO_ENCONTRADO` via `ui-datatable-empty-message` y ajustar timeouts si aplica.
 3. Medir rendimiento real del modo multiworker y ajustar cantidad de workers segun CPU, red y estabilidad de SUCAMEC.
-4. Clasificar formalmente vigencia/en tramite por empresa.
-5. Definir si la fuente definitiva de entrada sera local, Google Drive u otra herramienta.
+4. Actualizar la exportacion remota si el destino final migra de Excel local a Google Sheets por lotes.
+5. Clasificar formalmente vigencia/en tramite por empresa.
+6. Definir si la fuente definitiva de entrada sera local, Google Drive u otra herramienta.
