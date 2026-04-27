@@ -168,9 +168,14 @@ def load_input_records(input_excel: Path, logger: logging.Logger) -> list[InputR
         workbook.close()
 
 
-def write_search_results(output_dir: Path, results: list[SearchResult], logger: logging.Logger) -> Path:
+def write_search_results(
+    output_dir: Path,
+    results: list[SearchResult],
+    logger: logging.Logger,
+    filename_prefix: str = "RB_GADSOCarnetSUCAMEC",
+) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"RB_GADSOCarnetSUCAMEC_{datetime.now():%d.%m.%y_%H.%M.%S}.xlsx"
+    output_path = output_dir / f"{filename_prefix}_{datetime.now():%d.%m.%y_%H.%M.%S}.xlsx"
 
     workbook = Workbook()
     try:
@@ -189,7 +194,7 @@ def write_search_results(output_dir: Path, results: list[SearchResult], logger: 
                 cell.number_format = "@"
 
         workbook.save(output_path)
-        logger.info("Resultado RB_GADSOCarnetSUCAMEC guardado en %s", output_path)
+        logger.info("Resultado %s guardado en %s", filename_prefix, output_path)
         return output_path
     finally:
         workbook.close()

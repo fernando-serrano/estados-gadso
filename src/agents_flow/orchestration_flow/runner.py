@@ -4,9 +4,11 @@ import math
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
+from typing import TypeVar
 
 from playwright.sync_api import sync_playwright
 
+from src.agents_flow.dssp_emision_flow import process_no_encontrados_in_bandeja_emision
 from src.agents_flow.excel_flow import (
     InputRecord,
     SearchResult,
@@ -20,6 +22,26 @@ from src.agents_flow.login_flow.browser import close_browser, open_browser
 from src.agents_flow.login_flow.config import credentials_for_group, load_settings
 from src.agents_flow.login_flow.logging import RunLoggers
 from src.agents_flow.mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
+
+T = TypeVar("T")
+
+
+def _merge_dssp_validation_results(
+    results: list[SearchResult],
+    validated_results: list[SearchResult],
+) -> list[SearchResult]:
+    validated_by_document = {result.documento: result for result in validated_results if result.documento}
+    if not validated_by_document:
+        return list(results)
+
+    merged: list[SearchResult] = []
+    for result in results:
+        replacement = validated_by_document.get(result.documento)
+        if replacement is not None and (result.estado or "").strip().upper() == "NO_ENCONTRADO":
+            merged.append(replacement)
+        else:
+            merged.append(result)
+    return merged
 
 
 def _build_failed_batch_results(records: list[InputRecord], error_message: str) -> list[SearchResult]:
@@ -62,7 +84,7 @@ def _resolve_worker_count(settings, total_records: int) -> int:
     return max(1, worker_count)
 
 
-def _split_records(records: list[InputRecord], worker_count: int) -> list[list[InputRecord]]:
+def _split_records(records: list[T], worker_count: int) -> list[list[T]]:
     if not records:
         return []
 
@@ -194,6 +216,149 @@ def _run_solo_login(grupo: str, settings, run_name: str) -> None:
             run_loggers.close()
 
 
+def _run_dssp_validation_pass(
+    grupo: str,
+    settings,
+    run_name: str,
+    results: list[SearchResult],
+) -> list[SearchResult]:
+    targets = [result for result in results if (result.estado or "").strip().upper() == "NO_ENCONTRADO"]
+    if not targets:
+        return []
+
+    if settings.scheduled_multiworker and len(targets) > 1:
+        return _run_dssp_validation_multiworker(grupo, settings, run_name, targets)
+
+    return _run_dssp_validation_single_worker(grupo, settings, run_name, targets, worker_id=1, worker_total=1)
+
+
+def _run_dssp_validation_single_worker(
+    grupo: str,
+    settings,
+    run_name: str,
+    targets: list[SearchResult],
+    worker_id: int,
+    worker_total: int,
+) -> list[SearchResult]:
+    scope_name = f"postproceso_{worker_id:02d}"
+    run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name=scope_name)
+    logger = run_loggers.get("login_flow")
+    dssp_logger = run_loggers.get("dssp_emision_flow")
+    orchestration_logger = run_loggers.get("orchestration_flow")
+    browser = None
+    context = None
+
+    effective_settings = replace(settings, hold_browser_open=False)
+    _configure_worker_browser_env(worker_id, worker_total)
+
+    with sync_playwright() as playwright:
+        try:
+            orchestration_logger.info(
+                "[%s] Iniciando segunda etapa DSSP | worker=%s/%s | registros_no_encontrado=%s",
+                grupo,
+                worker_id,
+                worker_total,
+                len(targets),
+            )
+            browser, context, page = open_browser(playwright, effective_settings)
+            login(page, effective_settings, credentials_for_group(grupo), grupo, logger)
+            logger.info("[%s] URL post-login etapa DSSP: %s", grupo, page.url)
+            validated = process_no_encontrados_in_bandeja_emision(page, targets, dssp_logger)
+            orchestration_logger.info(
+                "[%s] Segunda etapa DSSP completada | worker=%s/%s | registros_validados=%s",
+                grupo,
+                worker_id,
+                worker_total,
+                len(validated),
+            )
+            return validated
+        finally:
+            close_browser(browser, context, logger=logger)
+            run_loggers.close()
+
+
+def _run_dssp_validation_worker_batch(
+    grupo: str,
+    settings,
+    run_name: str,
+    batch_index: int,
+    worker_total: int,
+    targets: list[SearchResult],
+) -> tuple[int, list[SearchResult]]:
+    results = _run_dssp_validation_single_worker(
+        grupo=grupo,
+        settings=settings,
+        run_name=run_name,
+        targets=targets,
+        worker_id=batch_index + 1,
+        worker_total=worker_total,
+    )
+    return batch_index, results
+
+
+def _run_dssp_validation_multiworker(
+    grupo: str,
+    settings,
+    run_name: str,
+    targets: list[SearchResult],
+) -> list[SearchResult]:
+    run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name="postproceso_coordinador")
+    orchestration_logger = run_loggers.get("orchestration_flow")
+    try:
+        worker_count = _resolve_worker_count(settings, len(targets))
+        batches = _split_records(targets, worker_count)
+        orchestration_logger.info(
+            "[%s] Segunda etapa DSSP multiworker | workers=%s | registros_no_encontrado=%s",
+            grupo,
+            len(batches),
+            len(targets),
+        )
+
+        results_by_batch: dict[int, list[SearchResult]] = {}
+        with ProcessPoolExecutor(max_workers=len(batches)) as executor:
+            futures = {
+                executor.submit(
+                    _run_dssp_validation_worker_batch,
+                    grupo,
+                    settings,
+                    run_name,
+                    batch_index,
+                    len(batches),
+                    batch,
+                ): (batch_index, batch)
+                for batch_index, batch in enumerate(batches)
+            }
+            for future in as_completed(futures):
+                batch_index, batch = futures[future]
+                try:
+                    completed_batch_index, batch_results = future.result()
+                    results_by_batch[completed_batch_index] = batch_results
+                    orchestration_logger.info(
+                        "[%s] DSSP worker %s completado | resultados=%s",
+                        grupo,
+                        completed_batch_index + 1,
+                        len(batch_results),
+                    )
+                except Exception as exc:
+                    orchestration_logger.exception(
+                        "[%s] DSSP worker %s fallo | registros=%s | error=%s: %s",
+                        grupo,
+                        batch_index + 1,
+                        len(batch),
+                        type(exc).__name__,
+                        exc,
+                    )
+                    results_by_batch[batch_index] = batch
+
+        ordered_results: list[SearchResult] = []
+        for batch_index in range(len(batches)):
+            ordered_results.extend(results_by_batch.get(batch_index, []))
+
+        return ordered_results
+    finally:
+        run_loggers.close()
+
+
 def _run_multiworker(grupo: str, settings, run_name: str, records: list[InputRecord]) -> list[SearchResult]:
     run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name="coordinador")
     orchestration_logger = run_loggers.get("orchestration_flow")
@@ -295,6 +460,28 @@ def run_group_flow(grupo: str, solo_login: bool = False) -> None:
 
         run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name="coordinador")
         excel_logger = run_loggers.get("excel_flow")
-        write_search_results(settings.lots_dir / run_name, results, excel_logger)
+        orchestration_logger = run_loggers.get("orchestration_flow")
+        output_dir = settings.lots_dir / run_name
+        write_search_results(output_dir, results, excel_logger)
+
+        try:
+            dssp_results = _run_dssp_validation_pass(grupo, settings, run_name, results)
+        except Exception as exc:
+            orchestration_logger.exception(
+                "[%s] Segunda etapa DSSP fallo sin afectar la salida principal | error=%s: %s",
+                grupo,
+                type(exc).__name__,
+                exc,
+            )
+            dssp_results = []
+
+        if dssp_results:
+            merged_dssp_results = _merge_dssp_validation_results(results, dssp_results)
+            write_search_results(
+                output_dir,
+                merged_dssp_results,
+                excel_logger,
+                filename_prefix="RB_GADSOValidacionNoEncontradosSUCAMEC",
+            )
     finally:
         run_loggers.close()
