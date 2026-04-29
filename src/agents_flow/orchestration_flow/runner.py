@@ -20,8 +20,9 @@ from src.agents_flow.excel_flow import (
 from src.agents_flow.login_flow.auth import login
 from src.agents_flow.login_flow.browser import close_browser, open_browser
 from src.agents_flow.login_flow.config import credentials_for_group, load_settings
-from src.agents_flow.login_flow.logging import RunLoggers
+from src.agents_flow.login_flow.logging import RunLoggers, max_run_dirs, prune_old_run_dirs
 from src.agents_flow.mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
+from src.agents_flow.notifications import send_run_summary_mail
 
 T = TypeVar("T")
 
@@ -245,36 +246,71 @@ def _run_dssp_validation_single_worker(
     logger = run_loggers.get("login_flow")
     dssp_logger = run_loggers.get("dssp_emision_flow")
     orchestration_logger = run_loggers.get("orchestration_flow")
-    browser = None
-    context = None
 
     effective_settings = replace(settings, hold_browser_open=False)
     _configure_worker_browser_env(worker_id, worker_total)
+    max_worker_attempts = max(1, settings.login_captcha_retries)
+    last_exception: Exception | None = None
 
-    with sync_playwright() as playwright:
-        try:
-            orchestration_logger.info(
-                "[%s] Iniciando segunda etapa DSSP | worker=%s/%s | registros_no_encontrado=%s",
-                grupo,
-                worker_id,
-                worker_total,
-                len(targets),
-            )
-            browser, context, page = open_browser(playwright, effective_settings)
-            login(page, effective_settings, credentials_for_group(grupo), grupo, logger)
-            logger.info("[%s] URL post-login etapa DSSP: %s", grupo, page.url)
-            validated = process_no_encontrados_in_bandeja_emision(page, targets, dssp_logger)
-            orchestration_logger.info(
-                "[%s] Segunda etapa DSSP completada | worker=%s/%s | registros_validados=%s",
-                grupo,
-                worker_id,
-                worker_total,
-                len(validated),
-            )
-            return validated
-        finally:
-            close_browser(browser, context, logger=logger)
-            run_loggers.close()
+    try:
+        with sync_playwright() as playwright:
+            for worker_attempt in range(1, max_worker_attempts + 1):
+                browser = None
+                context = None
+                orchestration_logger.info(
+                    "[%s] Iniciando segunda etapa DSSP | worker=%s/%s | intento=%s/%s | registros_no_encontrado=%s",
+                    grupo,
+                    worker_id,
+                    worker_total,
+                    worker_attempt,
+                    max_worker_attempts,
+                    len(targets),
+                )
+                try:
+                    browser, context, page = open_browser(playwright, effective_settings)
+                    login(page, effective_settings, credentials_for_group(grupo), grupo, logger)
+                    logger.info("[%s] URL post-login etapa DSSP: %s", grupo, page.url)
+                    validated = process_no_encontrados_in_bandeja_emision(page, targets, dssp_logger)
+                    orchestration_logger.info(
+                        "[%s] Segunda etapa DSSP completada | worker=%s/%s | intento=%s/%s | registros_validados=%s",
+                        grupo,
+                        worker_id,
+                        worker_total,
+                        worker_attempt,
+                        max_worker_attempts,
+                        len(validated),
+                    )
+                    return validated
+                except Exception as exc:
+                    last_exception = exc
+                    if worker_attempt < max_worker_attempts:
+                        orchestration_logger.warning(
+                            "[%s] Reintentando worker DSSP %s/%s tras fallo en intento %s/%s | error=%s: %s",
+                            grupo,
+                            worker_id,
+                            worker_total,
+                            worker_attempt,
+                            max_worker_attempts,
+                            type(exc).__name__,
+                            exc,
+                        )
+                    else:
+                        orchestration_logger.error(
+                            "[%s] Worker DSSP %s/%s agoto reintentos | error=%s: %s",
+                            grupo,
+                            worker_id,
+                            worker_total,
+                            type(exc).__name__,
+                            exc,
+                        )
+                finally:
+                    close_browser(browser, context, logger=logger)
+    finally:
+        run_loggers.close()
+
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError(f"[{grupo}] Segunda etapa DSSP finalizo sin resultado para worker {worker_id}")
 
 
 def _run_dssp_validation_worker_batch(
@@ -462,7 +498,18 @@ def run_group_flow(grupo: str, solo_login: bool = False) -> None:
         excel_logger = run_loggers.get("excel_flow")
         orchestration_logger = run_loggers.get("orchestration_flow")
         output_dir = settings.lots_dir / run_name
-        write_search_results(output_dir, results, excel_logger)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        deleted_lot_dirs = prune_old_run_dirs(
+            settings.lots_dir,
+            keep_dirs=max_run_dirs(),
+            protected_dir=output_dir,
+        )
+        if deleted_lot_dirs:
+            orchestration_logger.info(
+                "Control de lotes aplicado: %s corrida(s) antigua(s) eliminada(s)",
+                deleted_lot_dirs,
+            )
+        primary_output_path = write_search_results(output_dir, results, excel_logger)
 
         try:
             dssp_results = _run_dssp_validation_pass(grupo, settings, run_name, results)
@@ -475,13 +522,22 @@ def run_group_flow(grupo: str, solo_login: bool = False) -> None:
             )
             dssp_results = []
 
-        if dssp_results:
-            merged_dssp_results = _merge_dssp_validation_results(results, dssp_results)
-            write_search_results(
-                output_dir,
-                merged_dssp_results,
-                excel_logger,
-                filename_prefix="RB_GADSOValidacionNoEncontradosSUCAMEC",
-            )
+        merged_dssp_results = _merge_dssp_validation_results(results, dssp_results) if dssp_results else list(results)
+        validation_output_path = write_search_results(
+            output_dir,
+            merged_dssp_results,
+            excel_logger,
+            filename_prefix="RB_GADSOValidacionNoEncontradosSUCAMEC",
+        )
+        notification_attachments = [primary_output_path, validation_output_path]
+
+        send_run_summary_mail(
+            grupo=grupo,
+            run_name=run_name,
+            results=results,
+            dssp_results=dssp_results,
+            attachments=notification_attachments,
+            logger=orchestration_logger,
+        )
     finally:
         run_loggers.close()

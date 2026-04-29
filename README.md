@@ -79,6 +79,20 @@ SUCAMEC_INPUT_EXCEL=
 SUCAMEC_MAX_RECORDS=0
 ```
 
+Variables Microsoft Graph para envio de correo:
+
+```env
+MS_GRAPH_MAIL_ENABLED=1
+MS_GRAPH_MAIL_SUMMARY_ENABLED=1
+MS_GRAPH_TENANT_ID=
+MS_GRAPH_CLIENT_ID=
+MS_GRAPH_CLIENT_SECRET=
+MS_GRAPH_SENDER=
+MS_GRAPH_TO=
+MS_GRAPH_CC=
+MS_GRAPH_SUBJECT_PREFIX=BOT ARMAS-GADSO
+```
+
 Variables heredadas que tambien se respetan:
 
 ```env
@@ -137,12 +151,13 @@ El flujo implementado hace:
 12. Cada worker inicia una sola sesion, procesa su lote completo y evita recargar el Excel desde cero.
 13. Cada worker navega a `MIS VIGILANTES` una vez por lote y luego procesa los registros de forma secuencial dentro de esa vista.
 14. Extrae los datos base del vigilante desde la vista de detalle.
-15. Extrae los 2 primeros registros de la tabla de cursos cuya columna `Evaluacion` sea `APROBADO`, respetando el orden visual actual de la tabla.
-16. Extrae el primer registro real de la tabla de licencia.
+15. Extrae hasta 2 cursos validos de la tabla de cursos, filtrando solo filas con `Evaluacion = APROBADO` y respetando el orden visual actual de la tabla.
+16. Extrae una sola licencia vigente de la tabla de licencias, aplicando prioridad de modalidad segun reglas de negocio.
 17. Extrae los 2 primeros registros reales de la tabla de historial.
 18. Consolida toda la informacion en un unico registro por DNI, preservando el orden original de entrada.
-19. Guarda el Excel final en la raiz del proyecto, dentro de `lotes/<aaaammdd_hhmmss>/`.
-20. Si el navegador corre en modo oculto (`headless`), la retencion visual se desactiva automaticamente sin afectar login, navegacion ni scraping.
+19. Guarda el Excel principal y el Excel complementario de validacion en la raiz del proyecto, dentro de `lotes/<aaaammdd_hhmmss>/`.
+20. Si Microsoft Graph esta habilitado, envia ambos Excel por correo con un resumen operativo consolidado de la corrida.
+21. Si el navegador corre en modo oculto (`headless`), la retencion visual se desactiva automaticamente sin afectar login, navegacion ni scraping.
 
 ## Entrada Excel
 
@@ -210,10 +225,17 @@ src/agents_flow/
     navigation.py # CONSULTAS > MIS VIGILANTES
     search.py     # Busqueda por DNI y click en Ver
     selectors.py  # Selectores del menu/vista
+  notifications/
+    graph_client.py    # OAuth client credentials y envio de correo por Microsoft Graph
+    mail_config.py     # Carga/validacion de variables de correo
+    builders/
+      run_summary.py   # Construccion de asunto y cuerpo HTML del resumen final
+    services/
+      run_summary_service.py # Envio final de ambos Excel al cierre de la corrida
   extraction_flow/
     detail.py     # Extraccion de datos base del vigilante
-    courses.py    # Extraccion de cursos (2 primeros registros reales)
-    license.py    # Extraccion de licencia (primer registro real)
+    courses.py    # Extraccion de cursos con filtro por Evaluacion = APROBADO
+    license.py    # Extraccion de licencia con prioridad por modalidad
     history.py    # Extraccion de historial (2 primeros registros reales)
     __init__.py   # Agregacion de campos de salida e interfaz publica
   excel_flow/
@@ -256,6 +278,7 @@ Buenas practicas aplicadas:
 - La carpeta `lotes/<timestamp>/` contiene solo el archivo Excel final de la corrida.
 - `SUCAMEC_LOG_MAX_RUNS=10` conserva maximo 10 corridas.
 - Al crear la corrida 11, se elimina la carpeta de corrida mas antigua.
+- La carpeta `lotes/` tambien conserva un maximo de 10 corridas; al crear la corrida 11, se elimina la carpeta mas antigua.
 - Los handlers de archivo se cierran al finalizar para evitar bloqueos en Windows.
 
 ## Validaciones Aplicadas
@@ -315,6 +338,29 @@ Orquestacion y workers:
 - En multiworker no se deja el navegador abierto al finalizar.
 - El coordinador centraliza la escritura del Excel final en `lotes/<timestamp>/`.
 - La segmentacion de logs se hace por scope: `coordinador/` y `worker_##/`.
+- El correo de salida se dispara una sola vez al final de la corrida, desde el coordinador, para evitar duplicados por worker.
+- La segunda etapa DSSP reutiliza la logica base de login y, si un worker falla por sesion o captcha, reintenta el worker completo antes de dar el caso por no validado.
+
+Notificaciones por correo:
+
+- El envio de correo usa Microsoft Graph con flujo OAuth `client_credentials`.
+- La autenticacion se realiza con `tenant_id`, `client_id` y `client_secret` cargados desde `.env`.
+- El endpoint de envio usa la cuenta configurada en `MS_GRAPH_SENDER`.
+- Los destinatarios principales se leen desde `MS_GRAPH_TO`.
+- Los destinatarios en copia se leen desde `MS_GRAPH_CC`.
+- El asunto usa el prefijo definido en `MS_GRAPH_SUBJECT_PREFIX`.
+- El correo se construye al final de la corrida, cuando ya existen los Excel definitivos.
+- Se adjuntan siempre 2 archivos:
+- `RB_GADSOCarnetSUCAMEC_*.xlsx`
+- `RB_GADSOValidacionNoEncontradosSUCAMEC_*.xlsx`
+- Si la segunda etapa DSSP no genera cambios, el Excel complementario igual se emite con la consolidacion disponible para mantener consistencia operativa del envio.
+- El cuerpo del correo incluye identificacion de corrida, fecha/hora de generacion resaltadas y una tabla ejecutiva de resumen operativo.
+- El saludo del correo es `Saludos` con icono de robot.
+- El bloque `Generado` resalta fecha y hora en amarillo y muestra la hora con sufijo `hras`.
+- `Resumen operativo` se presenta en columnas: `Total procesados`, `No encontrado`, `Sin Ver`, `Worker error`, `Validados por DSSP`.
+- El bloque `Archivos adjuntos` se muestra como lista simple de los Excel emitidos.
+- El correo no incluye una seccion narrativa de sintesis del flujo.
+- Si el envio falla, la corrida no se invalida; el error se registra en logs y los Excel permanecen en `lotes/`.
 
 Extraccion estructurada:
 
@@ -327,6 +373,74 @@ Extraccion estructurada:
 - La combinacion final del resultado se realiza en `mis_vigilantes_flow/search.py`, no dentro de los extractores, para mantener separadas la navegacion y la logica de parsing.
 - El esquema consolidado de salida ya esta implementado en `extraction_flow/__init__.py` mediante `OUTPUT_FIELDS` y en `excel_flow/records.py` mediante el dataclass `SearchResult`.
 
+## Logica De Cursos Y Licencias
+
+Arquitectura aplicada:
+
+- La navegacion y el click en `Ver` viven en `mis_vigilantes_flow/search.py`.
+- La extraccion de cursos vive de forma aislada en `src/agents_flow/extraction_flow/courses.py`.
+- La extraccion de licencias vive de forma aislada en `src/agents_flow/extraction_flow/license.py`.
+- La consolidacion final de ambos bloques se hace al construir `SearchResult`, sin mezclar reglas de negocio con el flujo de navegacion.
+- Esta separacion permite cambiar criterios de seleccion de cursos o licencias sin tocar login, menu, busqueda ni escritura de Excel.
+
+Logica de cursos:
+
+- Fuente: tabla `#verForm:buscarCurDatatable_data`.
+- El extractor lee todas las filas reales del `tbody` y elimina filas vacias.
+- No se toma automaticamente la primera fila visible.
+- Solo se consideran candidatas las filas cuya columna `Evaluacion` sea exactamente `APROBADO`.
+- El orden de prioridad no se recalcula por fecha dentro del codigo; se respeta el orden visual que ya devuelve SUCAMEC en la tabla.
+- `curso_*_1` toma la primera fila aprobada encontrada.
+- `curso_*_2` toma la segunda fila aprobada encontrada.
+- Si solo existe una fila aprobada, solo se llena el bloque `_1` y el bloque `_2` queda vacio.
+- Si no existe ninguna fila aprobada, todas las columnas `curso_*_1` y `curso_*_2` quedan vacias.
+- Los campos exportados por cada curso son: `ruc`, `razon_social`, `evaluacion`, `tipo`, `fecha_inicio`, `fecha_venc`, `estado`.
+
+Casos de negocio cubiertos en cursos:
+
+- Si la primera fila visible no esta aprobada, se omite y se busca la siguiente aprobada.
+- Si la tabla tiene filas aprobadas y no aprobadas mezcladas, solo se exportan las aprobadas.
+- Si la tabla ya viene ordenada por fecha, el sistema conserva ese orden y por eso el primer aprobado corresponde al aprobado mas relevante segun la vista actual.
+
+Logica de licencias:
+
+- Fuente: tabla `#verForm:licDatatable_data`.
+- El extractor lee todas las filas reales del `tbody` y elimina filas vacias.
+- No se toma automaticamente la primera fila visible.
+- La modalidad se interpreta desde el texto de la columna `Modalidad`, detectando el codigo entre parentesis, por ejemplo `SEGURIDAD PRIVADA (L4)`.
+- Se reconocen los tipos `L1`, `L2`, `L3` y `L4`.
+- La seleccion responde a prioridad de negocio, no al orden visual de la tabla.
+
+Prioridad de seleccion de licencias:
+
+- Si existe al menos una licencia `L4`, se selecciona una `L4`.
+- Si no existe `L4` pero existe `L1`, se selecciona una `L1`.
+- Si no existe `L4` ni `L1` pero existe `L2`, se selecciona una `L2`.
+- `L3` solo se selecciona cuando esta sola o, equivalentemente, cuando no existe ninguna `L4`, `L1` ni `L2` candidata.
+- Si existen varias filas del mismo tipo priorizado, se conserva la primera que aparece en la tabla.
+
+Casos de negocio cubiertos en licencias:
+
+- `L1 + L2 + L4` -> se exporta `L4`.
+- `L1 + L4` -> se exporta `L4`.
+- `L2 + L4` -> se exporta `L4`.
+- `L1 + L2` -> se exporta `L1`.
+- `L3` sola -> se exporta `L3`.
+- `L3 + L1` -> se exporta `L1`.
+- `L3 + L2` -> se exporta `L2`.
+- `L3 + L4` -> se exporta `L4`.
+
+Columnas afectadas en la salida:
+
+- Cursos: `curso_ruc_1`, `curso_razon_social_1`, `curso_evaluacion_1`, `curso_tipo_1`, `curso_fecha_inicio_1`, `curso_fecha_venc_1`, `curso_estado_1`, `curso_ruc_2`, `curso_razon_social_2`, `curso_evaluacion_2`, `curso_tipo_2`, `curso_fecha_inicio_2`, `curso_fecha_venc_2`, `curso_estado_2`.
+- Licencia: `licencia_numero`, `licencia_fecha_emision`, `licencia_fecha_venc`, `licencia_modalidad`, `licencia_restricciones`.
+
+Impacto funcional:
+
+- El flujo gana consistencia frente a tablas donde el primer registro visible no es el correcto para negocio.
+- La logica de seleccion queda centralizada y auditable dentro de cada extractor.
+- El Excel final representa la prioridad operativa real solicitada por negocio y no solo el primer registro que SUCAMEC muestra en pantalla.
+
 Excel local:
 
 - Crea `data/entrada_data` si no existe.
@@ -335,6 +449,9 @@ Excel local:
 - Cierra explicitamente los workbooks al terminar lectura y escritura para reducir riesgo de bloqueos de archivo.
 - Escribe el resultado final en `lotes/<aaaammdd_hhmmss>/RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
 - El Excel final ya incluye todas las columnas implementadas hasta la fecha y esta ordenado por bloques funcionales:
+- Por corrida ahora se generan dos archivos de salida para facilitar control operativo y envio por correo:
+- Excel principal: `RB_GADSOCarnetSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
+- Excel complementario: `RB_GADSOValidacionNoEncontradosSUCAMEC_dd.mm.aa_hh.mm.ss.xlsx`.
 - Datos base: `documento`, `tipo_documento`, `nombre`, `estado`, `nro_carne`, `modalidad`, `ruc`, `expediente`, `nro_expediente`, `anho_expediente`, `fecha_emision`, `fecha_vencimiento`, `empresa`.
 - Cursos: `curso_ruc_1`, `curso_razon_social_1`, `curso_evaluacion_1`, `curso_tipo_1`, `curso_fecha_inicio_1`, `curso_fecha_venc_1`, `curso_estado_1`, `curso_ruc_2`, `curso_razon_social_2`, `curso_evaluacion_2`, `curso_tipo_2`, `curso_fecha_inicio_2`, `curso_fecha_venc_2`, `curso_estado_2`.
 - Licencia: `licencia_numero`, `licencia_fecha_emision`, `licencia_fecha_venc`, `licencia_modalidad`, `licencia_restricciones`.

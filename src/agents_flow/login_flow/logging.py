@@ -15,6 +15,10 @@ def _max_run_dirs() -> int:
         return 10
 
 
+def max_run_dirs() -> int:
+    return _max_run_dirs()
+
+
 def _prune_old_run_dirs(logs_dir: Path, keep_dirs: int, protected_dir: Path) -> int:
     protected = protected_dir.resolve()
     files = [
@@ -35,6 +39,11 @@ def _prune_old_run_dirs(logs_dir: Path, keep_dirs: int, protected_dir: Path) -> 
         except Exception:
             continue
     return deleted
+
+
+def prune_old_run_dirs(base_dir: Path, keep_dirs: int, protected_dir: Path) -> int:
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return _prune_old_run_dirs(base_dir, keep_dirs=keep_dirs, protected_dir=protected_dir)
 
 
 def _console_handler() -> logging.StreamHandler:
