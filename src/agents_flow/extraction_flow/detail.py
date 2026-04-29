@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import unicodedata
 
 from playwright.sync_api import Page
@@ -62,8 +63,57 @@ def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def wait_detail_view(page: Page, timeout_ms: int = 9000) -> None:
-    page.locator("#verForm\\:panelGrid").first.wait_for(state="visible", timeout=timeout_ms)
+def _detail_view_is_ready(page: Page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                    const isVisible = (element) => {
+                        if (!element) return false;
+                        const style = window.getComputedStyle(element);
+                        if (!style) return false;
+                        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                            return false;
+                        }
+                        const rect = element.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    };
+
+                    const body = document.body;
+                    if (!body || body.children.length === 0) return false;
+
+                    const panel = document.querySelector('#verForm\\\\:panelGrid');
+                    if (isVisible(panel)) return true;
+
+                    const fallbackSelectors = [
+                        '#verForm\\\\:licDatatable_data',
+                        '#verForm\\\\:buscarCurDatatable_data',
+                        '#verForm\\\\:buscarHistDatatable_data',
+                        '#verForm'
+                    ];
+                    return fallbackSelectors.some((selector) => isVisible(document.querySelector(selector)));
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def wait_detail_view(page: Page, timeout_ms: int = 18000) -> None:
+    deadline = time.time() + (max(1000, timeout_ms) / 1000.0)
+
+    while time.time() < deadline:
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=1000)
+        except Exception:
+            pass
+
+        if _detail_view_is_ready(page):
+            return
+
+        page.wait_for_timeout(250)
+
+    page.locator("#verForm\\:panelGrid").first.wait_for(state="visible", timeout=1000)
 
 
 def extract_detail_fields(page: Page, logger: logging.Logger) -> dict[str, str]:

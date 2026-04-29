@@ -11,6 +11,7 @@ from src.agents_flow.extraction_flow import (
     extract_history_fields,
     extract_license_fields,
 )
+from src.agents_flow.extraction_flow.detail import wait_detail_view
 from src.agents_flow.excel_flow import InputRecord, SearchResult
 from src.agents_flow.login_flow.auth import write_input
 
@@ -119,6 +120,7 @@ def search_record_and_open_detail(page: Page, record: InputRecord, logger: loggi
     except Exception:
         pass
     wait_primefaces_ajax(page, timeout_ms=9000)
+    wait_detail_view(page, timeout_ms=18000)
 
     logger.info("[FILA %s] Registro abierto con Ver para DNI=%s", record.row_number, record.dni)
     detail = extract_detail_fields(page, logger)

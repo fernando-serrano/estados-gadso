@@ -137,7 +137,7 @@ El flujo implementado hace:
 12. Cada worker inicia una sola sesion, procesa su lote completo y evita recargar el Excel desde cero.
 13. Cada worker navega a `MIS VIGILANTES` una vez por lote y luego procesa los registros de forma secuencial dentro de esa vista.
 14. Extrae los datos base del vigilante desde la vista de detalle.
-15. Extrae los 2 primeros registros reales de la tabla de cursos.
+15. Extrae los 2 primeros registros de la tabla de cursos cuya columna `Evaluacion` sea `APROBADO`, respetando el orden visual actual de la tabla.
 16. Extrae el primer registro real de la tabla de licencia.
 17. Extrae los 2 primeros registros reales de la tabla de historial.
 18. Consolida toda la informacion en un unico registro por DNI, preservando el orden original de entrada.
@@ -320,8 +320,8 @@ Extraccion estructurada:
 
 - La extraccion de la vista `Ver` esta segmentada por responsabilidad para mantener alta cohesion.
 - `detail.py` extrae solo los campos base del vigilante.
-- `courses.py` extrae un maximo de 2 cursos y genera columnas con sufijos `_1` y `_2`.
-- `license.py` extrae la licencia visible y genera un unico bloque de columnas `licencia_*`.
+- `courses.py` extrae un maximo de 2 cursos con `Evaluacion = APROBADO` y genera columnas con sufijos `_1` y `_2`.
+- `license.py` selecciona una sola licencia segun prioridad de modalidad: `L4` sobre `L1`, `L1` sobre `L2`, y `L3` solo cuando no existe otra modalidad candidata; luego genera un unico bloque de columnas `licencia_*`.
 - `history.py` extrae un maximo de 2 registros de historial y genera columnas con sufijos `_1` y `_2`.
 - Los extractores de tablas ignoran filas vacias del `tbody`, por lo que toman los primeros registros reales y no los primeros `tr` vacios.
 - La combinacion final del resultado se realiza en `mis_vigilantes_flow/search.py`, no dentro de los extractores, para mantener separadas la navegacion y la logica de parsing.

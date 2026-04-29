@@ -28,6 +28,11 @@ def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _is_approved_course(row: list[str], evaluacion_index: int = 2) -> bool:
+    value = row[evaluacion_index] if evaluacion_index < len(row) else ""
+    return _clean_text(value).upper() == "APROBADO"
+
+
 def extract_course_fields(page: Page, logger: logging.Logger) -> dict[str, str]:
     raw_rows = page.evaluate(
         """() => {
@@ -44,6 +49,7 @@ def extract_course_fields(page: Page, logger: logging.Logger) -> dict[str, str]:
 
     output = {field: "" for field in COURSE_OUTPUT_FIELDS}
     rows = [row for row in (raw_rows or []) if any(_clean_text(value) for value in row)]
+    approved_rows = [row for row in rows if _is_approved_course(row)]
     field_names = [
         "ruc",
         "razon_social",
@@ -54,13 +60,14 @@ def extract_course_fields(page: Page, logger: logging.Logger) -> dict[str, str]:
         "estado",
     ]
 
-    for index, row in enumerate((rows or [])[:2], start=1):
+    for index, row in enumerate(approved_rows[:2], start=1):
         for position, field_name in enumerate(field_names):
             value = row[position] if position < len(row) else ""
             output[f"curso_{field_name}_{index}"] = _clean_text(value)
 
     logger.info(
-        "Cursos extraidos: curso_1=%s/%s | curso_2=%s/%s",
+        "Cursos aprobados extraidos: aprobados=%s | curso_1=%s/%s | curso_2=%s/%s",
+        len(approved_rows),
         output.get("curso_ruc_1", ""),
         output.get("curso_estado_1", ""),
         output.get("curso_ruc_2", ""),
