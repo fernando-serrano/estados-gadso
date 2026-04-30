@@ -44,6 +44,11 @@ def extract_history_fields(page: Page, logger: logging.Logger) -> dict[str, str]
 
     output = {field: "" for field in HISTORY_OUTPUT_FIELDS}
     rows = [row for row in (raw_rows or []) if any(_clean_text(value) for value in row)]
+    rows = [
+        row
+        for row in rows
+        if "NO SE ENCONTR" not in " ".join(_clean_text(value).upper() for value in row)
+    ]
     field_names = [
         "ruc",
         "razon_social",

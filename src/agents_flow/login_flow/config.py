@@ -59,6 +59,7 @@ class Credentials:
 @dataclass(frozen=True)
 class Settings:
     login_url: str
+    consultas_module: str
     headless: bool
     hold_browser_open: bool
     ocr_max_intentos: int
@@ -83,6 +84,7 @@ def load_settings() -> Settings:
             "https://www.sucamec.gob.pe/sel/faces/login.xhtml?faces-redirect=true",
             fallback="CARNET_URL_LOGIN",
         ),
+        consultas_module=str_env("SUCAMEC_CONSULTAS_MODULE", "mis_vigilantes"),
         headless=bool_env("SUCAMEC_HEADLESS", default=False, fallback="CARNET_HEADLESS"),
         hold_browser_open=bool_env(
             "SUCAMEC_HOLD_BROWSER_OPEN",

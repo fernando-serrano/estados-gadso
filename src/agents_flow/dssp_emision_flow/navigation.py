@@ -5,7 +5,7 @@ import time
 
 from playwright.sync_api import Page
 
-from src.agents_flow.mis_vigilantes_flow.navigation import wait_primefaces_ajax
+from src.agents_flow.consultas_common import wait_primefaces_ajax
 
 from .selectors import MENU_SELECTORS, VIEW_SELECTORS
 

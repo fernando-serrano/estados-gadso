@@ -15,8 +15,12 @@ from src.agents_flow.extraction_flow import OUTPUT_FIELDS
 @dataclass(frozen=True)
 class InputRecord:
     row_number: int
-    dni: str
-    apellidos_nombres: str
+    nro_documento: str
+    apellidos_nombres: str = ""
+
+    @property
+    def dni(self) -> str:
+        return self.nro_documento
 
 
 @dataclass(frozen=True)
@@ -96,7 +100,7 @@ def resolve_input_excel(entrada_dir: Path, explicit_path: str = "") -> Path:
     if not candidates:
         raise FileNotFoundError(
             f"No se encontro ningun .xlsx en {entrada_dir}. "
-            "Coloca el archivo de entrada con columnas DNI y APELLIDOS Y NOMBRES."
+            "Coloca el archivo de entrada con la columna NRO DOCUMENTO."
         )
     return candidates[0]
 
@@ -123,7 +127,7 @@ def _cell_to_text_preserving_zeros(cell) -> str:
     else:
         return str(value).strip()
 
-    # Si Excel guardo el DNI como numero con formato 00000000, recuperamos ceros de la mascara.
+    # Si Excel guardo el nro de documento como numero con formato 00000000, recuperamos ceros de la mascara.
     if re.fullmatch(r"0+", number_format):
         return digits.zfill(len(number_format))
     return digits
@@ -139,25 +143,35 @@ def load_input_records(input_excel: Path, logger: logging.Logger) -> list[InputR
             raise ValueError("El Excel de entrada no tiene cabecera")
 
         headers = {_normalize_header(cell.value): index for index, cell in enumerate(header_cells)}
-        dni_index = headers.get("DNI")
+        document_index = headers.get("NRO DOCUMENTO")
+        if document_index is None:
+            document_index = headers.get("DNI")
         name_index = headers.get("APELLIDOS Y NOMBRES")
 
-        if dni_index is None or name_index is None:
-            raise ValueError("El Excel debe contener las columnas exactas: DNI, APELLIDOS Y NOMBRES")
+        if document_index is None:
+            raise ValueError(
+                "El Excel debe contener al menos la columna NRO DOCUMENTO "
+                "(se acepta DNI como compatibilidad)."
+            )
+
+        if name_index is None:
+            logger.warning(
+                "La columna 'APELLIDOS Y NOMBRES' no existe en el Excel de entrada; se continuara usando solo NRO DOCUMENTO."
+            )
 
         records: list[InputRecord] = []
         for row_number, row in enumerate(sheet.iter_rows(min_row=2), start=2):
-            dni = _cell_to_text_preserving_zeros(row[dni_index])
-            apellidos_nombres = _cell_to_text_preserving_zeros(row[name_index])
-            if not dni and not apellidos_nombres:
+            nro_documento = _cell_to_text_preserving_zeros(row[document_index])
+            apellidos_nombres = _cell_to_text_preserving_zeros(row[name_index]) if name_index is not None else ""
+            if not nro_documento and not apellidos_nombres:
                 continue
-            if not dni:
-                logger.warning("[FILA %s] Registro omitido: DNI vacio", row_number)
+            if not nro_documento:
+                logger.warning("[FILA %s] Registro omitido: NRO DOCUMENTO vacio", row_number)
                 continue
             records.append(
                 InputRecord(
                     row_number=row_number,
-                    dni=dni,
+                    nro_documento=nro_documento,
                     apellidos_nombres=apellidos_nombres,
                 )
             )

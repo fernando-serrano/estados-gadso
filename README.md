@@ -1,6 +1,6 @@
 # ESTADOS GADSO - Flujo SUCAMEC
 
-Automatizacion modular para acceder a la plataforma SUCAMEC, autenticar empresas J&V Resguardo/Selva y navegar al modulo `CONSULTAS > MIS VIGILANTES`.
+Automatizacion modular para acceder a la plataforma SUCAMEC, autenticar empresas J&V Resguardo/Selva y navegar al modulo configurado en `CONSULTAS`, usando por compatibilidad `MIS VIGILANTES` o `BUSQUEDA DE VIGILANTES`.
 
 ## Instalacion Desde Cero
 
@@ -70,6 +70,7 @@ BROWSER_TILE_ENABLE=0
 Variables SUCAMEC usadas por el flujo actual:
 
 ```env
+SUCAMEC_CONSULTAS_MODULE=mis_vigilantes
 SUCAMEC_LOGIN_CAPTCHA_RETRIES=3
 SUCAMEC_CAPTCHA_SOLVE_TIMEOUT_MS=120000
 SUCAMEC_FORCE_FIRST_CAPTCHA=
@@ -78,6 +79,12 @@ SUCAMEC_LOG_MAX_RUNS=10
 SUCAMEC_INPUT_EXCEL=
 SUCAMEC_MAX_RECORDS=0
 ```
+
+Selector de modulo de consultas:
+
+- `SUCAMEC_CONSULTAS_MODULE=mis_vigilantes` mantiene el flujo historico.
+- `SUCAMEC_CONSULTAS_MODULE=busqueda_vigilantes` navega a `CONSULTAS > BUSQUEDA DE VIGILANTES`.
+- En `busqueda_vigilantes`, el bot selecciona `NRO DNI` si el `NRO DOCUMENTO` tiene 8 digitos y `NRO C.E.` si tiene 9 digitos antes de buscar.
 
 Variables Microsoft Graph para envio de correo:
 
@@ -154,7 +161,7 @@ El flujo implementado hace:
 15. Extrae hasta 2 cursos validos de la tabla de cursos, filtrando solo filas con `Evaluacion = APROBADO` y respetando el orden visual actual de la tabla.
 16. Extrae una sola licencia vigente de la tabla de licencias, aplicando prioridad de modalidad segun reglas de negocio.
 17. Extrae los 2 primeros registros reales de la tabla de historial.
-18. Consolida toda la informacion en un unico registro por DNI, preservando el orden original de entrada.
+18. Consolida toda la informacion en un unico registro por numero de documento, preservando el orden original de entrada.
 19. Guarda el Excel principal y el Excel complementario de validacion en la raiz del proyecto, dentro de `lotes/<aaaammdd_hhmmss>/`.
 20. Si Microsoft Graph esta habilitado, envia ambos Excel por correo con un resumen operativo consolidado de la corrida.
 21. Si el navegador corre en modo oculto (`headless`), la retencion visual se desactiva automaticamente sin afectar login, navegacion ni scraping.
@@ -172,18 +179,20 @@ data/
 Formato obligatorio del Excel:
 
 ```text
-DNI | APELLIDOS Y NOMBRES
+NRO DOCUMENTO
 ```
 
 Restricciones de lectura:
 
-- El encabezado debe llamarse exactamente `DNI` y `APELLIDOS Y NOMBRES`.
-- Los DNIs se tratan como texto, no como numeros.
+- El encabezado requerido es `NRO DOCUMENTO`.
+- `APELLIDOS Y NOMBRES` ya no es obligatorio ni relevante para el flujo.
+- Por compatibilidad, tambien se acepta `DNI` como encabezado legado.
+- Los numeros de documento se tratan como texto, no como numeros.
 - No se convierten a `int`.
 - No se eliminan ceros al inicio ni al final.
-- Si Excel guardo el DNI como numero con formato de celda tipo `00000000`, se recupera el relleno de ceros.
+- Si Excel guardo el numero de documento como numero con formato de celda tipo `00000000`, se recupera el relleno de ceros.
 - Si Excel ya perdio los ceros por estar guardado como numero sin formato, el bot no puede reconstruirlos con certeza.
-- Recomendacion: en Excel, formatear la columna `DNI` como `Texto` antes de pegar datos.
+- Recomendacion: en Excel, formatear la columna `NRO DOCUMENTO` como `Texto` antes de pegar datos.
 
 Si `SUCAMEC_INPUT_EXCEL=` esta vacio, el flujo toma el `.xlsx` mas reciente dentro de `data/entrada_data`.
 
@@ -223,7 +232,7 @@ src/agents_flow/
     cli.py        # Orquestacion actual
   mis_vigilantes_flow/
     navigation.py # CONSULTAS > MIS VIGILANTES
-    search.py     # Busqueda por DNI y click en Ver
+    search.py     # Busqueda por numero de documento y click en Ver
     selectors.py  # Selectores del menu/vista
   notifications/
     graph_client.py    # OAuth client credentials y envio de correo por Microsoft Graph
@@ -314,11 +323,11 @@ Navegacion a Mis Vigilantes:
 - Usa fast-path por anchor JSF `MIS VIGILANTES` cuando esta disponible.
 - Fallback jerarquico: expande `CONSULTAS` y hace click en `MIS VIGILANTES`.
 - Espera cola AJAX de PrimeFaces.
-- Valida la vista por presencia de `DNI` y `Buscar`.
+- Valida la vista por presencia de `NRO DOCUMENTO` o `DNI`, y `Buscar`.
 
-Busqueda por DNI:
+Busqueda por numero de documento:
 
-- Escribe el DNI en `buscarForm:j_idt32`.
+- Escribe el numero de documento en el campo de criterio de busqueda.
 - Acciona `buscarForm:botonBuscar`.
 - Espera la tabla `table[role='grid']`.
 - La navegacion a `MIS VIGILANTES` se realiza una sola vez por lote, no antes de cada registro.

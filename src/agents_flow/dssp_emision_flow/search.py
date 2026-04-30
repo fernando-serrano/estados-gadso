@@ -8,7 +8,7 @@ from playwright.sync_api import Page
 
 from src.agents_flow.excel_flow import SearchResult
 from src.agents_flow.login_flow.auth import write_input
-from src.agents_flow.mis_vigilantes_flow.navigation import wait_primefaces_ajax
+from src.agents_flow.consultas_common import wait_primefaces_ajax
 
 from .navigation import navigate_to_bandeja_emision
 from .selectors import VIEW_SELECTORS

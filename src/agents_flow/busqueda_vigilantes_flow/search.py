@@ -15,8 +15,8 @@ from src.agents_flow.extraction_flow import (
 from src.agents_flow.excel_flow import InputRecord, SearchResult
 from src.agents_flow.login_flow.auth import write_input
 
-from .navigation import navigate_to_mis_vigilantes
-from .selectors import VIEW_SELECTORS
+from .navigation import navigate_to_busqueda_vigilantes
+from .selectors import VIEW_SELECTORS, infer_document_type
 
 
 def _wait_for_search_response(page: Page, timeout_ms: int = 9000) -> None:
@@ -113,6 +113,50 @@ def _extract_first_result_row_summary(page: Page, expected_document: str) -> dic
     return summary
 
 
+def _select_document_type(page: Page, record: InputRecord, logger: logging.Logger) -> str:
+    doc_type = infer_document_type(record.nro_documento)
+    option_selector = VIEW_SELECTORS["opcion_nro_ce"] if doc_type == "CE" else VIEW_SELECTORS["opcion_nro_dni"]
+    expected_label = "NRO C.E." if doc_type == "CE" else "NRO DNI"
+
+    page.locator(VIEW_SELECTORS["tipo_documento_trigger"]).first.wait_for(state="visible", timeout=10000)
+    current_label = ""
+    try:
+        current_label = (page.locator(VIEW_SELECTORS["tipo_documento_label"]).first.inner_text(timeout=500) or "").strip().upper()
+    except Exception:
+        current_label = ""
+
+    if current_label != expected_label:
+        page.locator(VIEW_SELECTORS["tipo_documento_trigger"]).first.click(timeout=10000)
+        option = page.locator(option_selector).first
+        option.wait_for(state="visible", timeout=8000)
+        option.click(timeout=10000)
+        wait_primefaces_ajax(page, timeout_ms=4000)
+        page.wait_for_function(
+            """([selector, expectedLabel]) => {
+                const el = document.querySelector(selector);
+                const text = String(el?.textContent || '').replace(/\\s+/g, ' ').trim().toUpperCase();
+                return text === expectedLabel;
+            }""",
+            arg=[VIEW_SELECTORS["tipo_documento_label"], expected_label],
+            timeout=4000,
+        )
+
+    page.wait_for_function(
+        """([selector, minLength]) => {
+            const input = document.querySelector(selector);
+            if (!input) return false;
+            const raw = input.getAttribute('maxlength') || '';
+            const maxLength = Number(raw);
+            if (!raw || Number.isNaN(maxLength) || maxLength <= 0) return true;
+            return maxLength >= minLength;
+        }""",
+        arg=[VIEW_SELECTORS["criterio_busqueda"], len(str(record.nro_documento or "").strip())],
+        timeout=4000,
+    )
+    logger.info("[FILA %s] Tipo de documento seleccionado en BUSQUEDA DE VIGILANTES: %s", record.row_number, expected_label)
+    return doc_type
+
+
 def return_to_search_view(page: Page, logger: logging.Logger) -> None:
     button = page.locator(VIEW_SELECTORS["boton_buscar_vigilantes"]).first
     button.wait_for(state="visible", timeout=10000)
@@ -124,38 +168,39 @@ def return_to_search_view(page: Page, logger: logging.Logger) -> None:
         pass
     wait_primefaces_ajax(page, timeout_ms=9000)
     page.locator(VIEW_SELECTORS["criterio_busqueda"]).first.wait_for(state="visible", timeout=10000)
-    logger.info("Retorno a vista de busqueda MIS VIGILANTES confirmado")
+    logger.info("Retorno a vista de busqueda BUSQUEDA DE VIGILANTES confirmado")
 
 
 def search_record_and_open_detail(page: Page, record: InputRecord, logger: logging.Logger) -> SearchResult:
-    logger.info("[FILA %s] Buscando NRO DOCUMENTO=%s", record.row_number, record.nro_documento)
+    doc_type = _select_document_type(page, record, logger)
+    logger.info("[FILA %s] Buscando NRO DOCUMENTO (%s)=%s", record.row_number, doc_type, record.nro_documento)
 
     write_input(page, VIEW_SELECTORS["criterio_busqueda"], record.nro_documento)
     page.locator(VIEW_SELECTORS["boton_buscar"]).first.click(timeout=10000)
     _wait_for_search_response(page)
 
     if _results_table_has_empty_message(page):
-        logger.info("[FILA %s] Sin resultados para NRO DOCUMENTO=%s (empty-message)", record.row_number, record.nro_documento)
+        logger.info("[FILA %s] Sin resultados para NRO DOCUMENTO (%s)=%s (empty-message)", record.row_number, doc_type, record.nro_documento)
         return SearchResult(
             documento=record.nro_documento,
-            tipo_documento="DNI",
+            tipo_documento=doc_type,
             nombre=record.apellidos_nombres,
             estado="NO_ENCONTRADO",
         )
 
     if not _first_ver_link_is_available(page):
         if _page_has_no_results(page):
-            logger.info("[FILA %s] Sin resultados para NRO DOCUMENTO=%s", record.row_number, record.nro_documento)
+            logger.info("[FILA %s] Sin resultados para NRO DOCUMENTO (%s)=%s", record.row_number, doc_type, record.nro_documento)
             return SearchResult(
                 documento=record.nro_documento,
-                tipo_documento="DNI",
+                tipo_documento=doc_type,
                 nombre=record.apellidos_nombres,
                 estado="NO_ENCONTRADO",
             )
-        logger.warning("[FILA %s] No se encontro enlace Ver para NRO DOCUMENTO=%s", record.row_number, record.nro_documento)
+        logger.warning("[FILA %s] No se encontro enlace Ver para NRO DOCUMENTO (%s)=%s", record.row_number, doc_type, record.nro_documento)
         return SearchResult(
             documento=record.nro_documento,
-            tipo_documento="DNI",
+            tipo_documento=doc_type,
             nombre=record.apellidos_nombres,
             estado="SIN_VER",
         )
@@ -163,13 +208,15 @@ def search_record_and_open_detail(page: Page, record: InputRecord, logger: loggi
     row_summary = _extract_first_result_row_summary(page, record.nro_documento)
     click_ver_and_wait_detail(page, logger, VIEW_SELECTORS["ver_primero"], detail_timeout_ms=18000)
 
-    logger.info("[FILA %s] Registro abierto con Ver para NRO DOCUMENTO=%s", record.row_number, record.nro_documento)
+    logger.info("[FILA %s] Registro abierto con Ver para NRO DOCUMENTO (%s)=%s", record.row_number, doc_type, record.nro_documento)
     detail = extract_detail_fields(page, logger)
     courses = extract_course_fields(page, logger)
     license_data = extract_license_fields(page, logger)
     history = extract_history_fields(page, logger)
     if not detail.get("documento"):
         detail["documento"] = record.nro_documento
+    if not detail.get("tipo_documento"):
+        detail["tipo_documento"] = doc_type
     if not detail.get("nombre") and row_summary.get("nombre"):
         detail["nombre"] = row_summary["nombre"]
     if not detail.get("nombre"):
@@ -179,14 +226,14 @@ def search_record_and_open_detail(page: Page, record: InputRecord, logger: loggi
     return result
 
 
-def process_records_in_mis_vigilantes(
+def process_records_in_busqueda_vigilantes(
     page: Page,
     records: list[InputRecord],
     logger: logging.Logger,
 ) -> list[SearchResult]:
     results: list[SearchResult] = []
     if records:
-        navigate_to_mis_vigilantes(page, logger)
+        navigate_to_busqueda_vigilantes(page, logger)
 
     for index, record in enumerate(records, start=1):
         logger.info("Procesando registro %s/%s", index, len(records))

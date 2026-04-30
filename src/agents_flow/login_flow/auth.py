@@ -64,6 +64,48 @@ def write_input(page: Page, selector: str, value: str) -> None:
         field.blur()
 
 
+def _compact_text(value: str | None) -> str:
+    return str(value or "").strip()
+
+
+def _read_input_value(page: Page, selector: str) -> str:
+    try:
+        return _compact_text(page.locator(selector).first.input_value(timeout=800))
+    except Exception:
+        return ""
+
+
+def ensure_login_form_values(
+    page: Page,
+    credentials: Credentials,
+    captcha_text: str,
+    grupo: str,
+    logger: logging.Logger,
+) -> None:
+    expected_values = [
+        ("numero_documento", credentials.numero_documento, "Numero de Documento"),
+        ("usuario", credentials.usuario, "Usuario"),
+        ("clave", credentials.contrasena, "Clave"),
+        ("captcha_input", captcha_text, "Captcha"),
+    ]
+
+    restored_fields: list[str] = []
+    for selector_key, expected_value, label in expected_values:
+        selector = LOGIN_SELECTORS[selector_key]
+        current_value = _read_input_value(page, selector)
+        if current_value == _compact_text(expected_value):
+            continue
+        write_input(page, selector, expected_value)
+        restored_fields.append(label)
+
+    if restored_fields:
+        logger.warning(
+            "[%s] Campos reescritos antes de Ingresar por limpieza/intermitencia UI: %s",
+            grupo,
+            ", ".join(restored_fields),
+        )
+
+
 def fill_credentials(page: Page, credentials: Credentials, grupo: str, logger: logging.Logger) -> None:
     page.locator(LOGIN_SELECTORS["numero_documento"]).wait_for(state="visible", timeout=9000)
     page.select_option(LOGIN_SELECTORS["tipo_doc_select"], value=credentials.tipo_documento_valor)
@@ -209,7 +251,7 @@ def refresh_captcha(page: Page, logger: logging.Logger) -> None:
                 const src = img.getAttribute('src') || '';
                 return src && src !== previousSrc && img.complete;
             }""",
-            [LOGIN_SELECTORS["captcha_img"], previous_src],
+            arg=[LOGIN_SELECTORS["captcha_img"], previous_src],
             timeout=3500,
         )
     except Exception:
@@ -292,6 +334,7 @@ def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, 
             )
         write_input(page, LOGIN_SELECTORS["captcha_input"], captcha_text)
         logger.info("[%s] Captcha escrito automaticamente", grupo)
+        ensure_login_form_values(page, credentials, captcha_text, grupo, logger)
 
         page.locator(LOGIN_SELECTORS["ingresar"]).click(timeout=10000)
         ok, error_message, validation_elapsed = validate_login_result(

@@ -9,6 +9,11 @@ from typing import TypeVar
 from playwright.sync_api import sync_playwright
 
 from src.agents_flow.dssp_emision_flow import process_no_encontrados_in_bandeja_emision
+from src.agents_flow.busqueda_vigilantes_flow import (
+    navigate_to_busqueda_vigilantes,
+    process_records_in_busqueda_vigilantes,
+)
+from src.agents_flow.busqueda_vigilantes_flow.selectors import infer_document_type as infer_busqueda_document_type
 from src.agents_flow.excel_flow import (
     InputRecord,
     SearchResult,
@@ -48,14 +53,31 @@ def _merge_dssp_validation_results(
 def _build_failed_batch_results(records: list[InputRecord], error_message: str) -> list[SearchResult]:
     return [
         SearchResult(
-            documento=record.dni,
-            tipo_documento="DNI",
+            documento=record.nro_documento,
+            tipo_documento=infer_busqueda_document_type(record.nro_documento),
             nombre=record.apellidos_nombres,
             estado="WORKER_ERROR",
             empresa=error_message,
         )
         for record in records
     ]
+
+
+def _resolve_consultas_flow(settings):
+    module_name = str(settings.consultas_module or "").strip().lower()
+    if module_name == "busqueda_vigilantes":
+        return (
+            "busqueda_vigilantes_flow",
+            "BUSQUEDA DE VIGILANTES",
+            navigate_to_busqueda_vigilantes,
+            process_records_in_busqueda_vigilantes,
+        )
+    return (
+        "mis_vigilantes_flow",
+        "MIS VIGILANTES",
+        navigate_to_mis_vigilantes,
+        process_records_in_mis_vigilantes,
+    )
 
 
 def _load_records(settings, excel_logger) -> list[InputRecord]:
@@ -143,9 +165,10 @@ def _run_single_browser_batch(
     keep_browser_open: bool = False,
 ) -> list[SearchResult]:
     worker_scope = f"worker_{worker_id:02d}"
+    flow_logger_name, flow_label, navigate_consultas, process_consultas = _resolve_consultas_flow(settings)
     run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name=worker_scope)
     logger = run_loggers.get("login_flow")
-    mis_vigilantes_logger = run_loggers.get("mis_vigilantes_flow")
+    consultas_logger = run_loggers.get(flow_logger_name)
     browser = None
     context = None
 
@@ -160,9 +183,9 @@ def _run_single_browser_batch(
             if not records:
                 return []
 
-            navigate_to_mis_vigilantes(page, mis_vigilantes_logger)
-            mis_vigilantes_logger.info("[%s] URL post-MIS VIGILANTES: %s", grupo, page.url)
-            mis_vigilantes_logger.info(
+            navigate_consultas(page, consultas_logger)
+            consultas_logger.info("[%s] URL post-%s: %s", grupo, flow_label, page.url)
+            consultas_logger.info(
                 "[worker %s/%s] Procesando lote de %s registro(s): filas %s-%s",
                 worker_id,
                 worker_total,
@@ -170,7 +193,7 @@ def _run_single_browser_batch(
                 records[0].row_number,
                 records[-1].row_number,
             )
-            results = process_records_in_mis_vigilantes(page, records, mis_vigilantes_logger)
+            results = process_consultas(page, records, consultas_logger)
 
             if keep_browser_open:
                 _wait_for_browser_close_if_needed(page, browser, settings, grupo, logger)
