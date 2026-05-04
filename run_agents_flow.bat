@@ -5,8 +5,10 @@ cd /d "%~dp0"
 
 if exist ".venv\Scripts\activate.bat" (
     call ".venv\Scripts\activate.bat"
+    set "PYTHON_CMD=%CD%\.venv\Scripts\python.exe"
 ) else (
     echo [INFO] No se encontro .venv. Se usara el Python disponible en PATH.
+    set "PYTHON_CMD=python"
 )
 
 set "GRUPO=%~1"
@@ -28,7 +30,7 @@ exit /b 2
 
 :run
 echo [INFO] Ejecutando flujo SUCAMEC con grupo: %GRUPO%
-python -m src.agents_flow.cli --grupo %GRUPO% %EXTRA_ARG%
+"%PYTHON_CMD%" -m src.agents_flow.cli --grupo %GRUPO% %EXTRA_ARG%
 
 set "EXIT_CODE=%ERRORLEVEL%"
 echo [INFO] Flujo finalizado con codigo: %EXIT_CODE%

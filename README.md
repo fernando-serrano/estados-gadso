@@ -22,6 +22,12 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
+Para que VS Code use las variables de `.env` en la terminal integrada, activa esta configuración:
+
+```json
+"python.terminal.useEnvFile": true
+```
+
 Si PowerShell bloquea la activacion del entorno virtual:
 
 ```powershell
@@ -117,6 +123,7 @@ SCREENSHOT_DIR=screenshots
 Forma recomendada en Windows:
 
 ```bat
+.\run_agents_flow.bat
 run_agents_flow.bat
 run_agents_flow.bat JV
 run_agents_flow.bat SELVA
