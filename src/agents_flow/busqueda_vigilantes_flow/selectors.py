@@ -26,7 +26,18 @@ VIEW_SELECTORS = {
     "tipo_documento_label": "#buscarForm\\:tipoId_label",
     "opcion_nro_dni": "#buscarForm\\:tipoId_1",
     "opcion_nro_ce": "#buscarForm\\:tipoId_2",
-    "criterio_busqueda": "#buscarForm\\:j_idt35",
+    "criterio_busqueda": (
+        "#buscarForm\\:j_idt35, "
+        "#buscarForm input.ui-inputtext[type='text']"
+        ":not([aria-hidden='true'])"
+        ":not(.ui-selectonemenu-filter)"
+        ":not(.ui-paginator-page-input)"
+        ":not([id*='paginator'])"
+        ":not([name*='paginator'])"
+        ":not([id$='_focus'])"
+        ":not([name$='_focus'])"
+        ":not([role='combobox'])"
+    ),
     "boton_buscar": "#buscarForm\\:botonBuscar",
     "boton_buscar_vigilantes": "#verForm\\:j_idt201, button:has-text('Buscar vigilantes')",
     "tabla_resultados": "table[role='grid'], #buscarForm\\:buscarDatatable",

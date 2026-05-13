@@ -141,18 +141,10 @@ def _select_document_type(page: Page, record: InputRecord, logger: logging.Logge
             timeout=4000,
         )
 
-    page.wait_for_function(
-        """([selector, minLength]) => {
-            const input = document.querySelector(selector);
-            if (!input) return false;
-            const raw = input.getAttribute('maxlength') || '';
-            const maxLength = Number(raw);
-            if (!raw || Number.isNaN(maxLength) || maxLength <= 0) return true;
-            return maxLength >= minLength;
-        }""",
-        arg=[VIEW_SELECTORS["criterio_busqueda"], len(str(record.nro_documento or "").strip())],
-        timeout=4000,
-    )
+    try:
+        page.locator(VIEW_SELECTORS["criterio_busqueda"]).first.wait_for(state="visible", timeout=4000)
+    except Exception:
+        pass
     logger.info("[FILA %s] Tipo de documento seleccionado en BUSQUEDA DE VIGILANTES: %s", record.row_number, expected_label)
     return doc_type
 

@@ -43,7 +43,7 @@ def get_ocr_reader():
 
 
 def write_input(page: Page, selector: str, value: str) -> None:
-    field = page.locator(selector)
+    field = page.locator(selector).first
     field.wait_for(state="visible", timeout=12000)
     field.click()
     field.fill(value)
