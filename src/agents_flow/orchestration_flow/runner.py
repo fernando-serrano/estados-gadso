@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from typing import TypeVar
@@ -28,6 +29,7 @@ from src.agents_flow.login_flow.config import credentials_for_group, load_settin
 from src.agents_flow.login_flow.logging import RunLoggers, max_run_dirs, prune_old_run_dirs
 from src.agents_flow.mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
 from src.agents_flow.notifications import send_run_summary_mail
+from src.agents_flow.recovery import SessionRecovery
 
 T = TypeVar("T")
 
@@ -169,39 +171,112 @@ def _run_single_browser_batch(
     run_loggers = RunLoggers(settings.logs_dir, run_name=run_name, scope_name=worker_scope)
     logger = run_loggers.get("login_flow")
     consultas_logger = run_loggers.get(flow_logger_name)
-    browser = None
-    context = None
+    orchestration_logger = run_loggers.get("orchestration_flow")
 
     effective_settings = replace(settings, hold_browser_open=False)
     _configure_worker_browser_env(worker_id, worker_total)
 
-    with sync_playwright() as playwright:
-        try:
-            browser, context, page = open_browser(playwright, effective_settings)
-            login(page, effective_settings, credentials_for_group(grupo), grupo, logger)
-            logger.info("[%s] URL post-login: %s", grupo, page.url)
-            if not records:
-                return []
+    credentials = credentials_for_group(grupo)
+    # Resultados ya completados (persisten entre reaperturas de navegador) y cola pendiente.
+    collected: list[SearchResult] = []
+    remaining = list(records)
+    max_failed_sessions = effective_settings.server_error_max_failed_sessions  # 0 = ilimitado
+    wait_seconds = max(0.0, effective_settings.server_error_wait_ms / 1000.0)
+    session_index = 0
+    consecutive_failed_sessions = 0
+    backoff_pending = False
 
-            navigate_consultas(page, consultas_logger)
-            consultas_logger.info("[%s] URL post-%s: %s", grupo, flow_label, page.url)
-            consultas_logger.info(
-                "[worker %s/%s] Procesando lote de %s registro(s): filas %s-%s",
-                worker_id,
-                worker_total,
-                len(records),
-                records[0].row_number,
-                records[-1].row_number,
-            )
-            results = process_consultas(page, records, consultas_logger)
+    try:
+        with sync_playwright() as playwright:
+            # Modelo "operador con su cola": se procesa hasta agotar `remaining`. Si la
+            # sesion cae (incluida la muerte del navegador), se reabre todo y se reanuda
+            # desde el registro pendiente, sin reprocesar lo ya hecho.
+            while remaining:
+                session_index += 1
+                # La espera va AQUI, ya con el navegador anterior cerrado por el finally,
+                # para no dejar ventanas muertas abiertas mientras se espera.
+                if backoff_pending and wait_seconds:
+                    time.sleep(wait_seconds)  # deja respirar a SUCAMEC antes de reabrir
+                backoff_pending = False
+                done_before = len(collected)
+                browser = None
+                context = None
+                try:
+                    browser, context, page = open_browser(playwright, effective_settings)
+                    login(page, effective_settings, credentials, grupo, logger)
+                    logger.info("[%s] URL post-login: %s", grupo, page.url)
 
-            if keep_browser_open:
-                _wait_for_browser_close_if_needed(page, browser, settings, grupo, logger)
+                    navigate_consultas(page, consultas_logger)
+                    consultas_logger.info("[%s] URL post-%s: %s", grupo, flow_label, page.url)
+                    consultas_logger.info(
+                        "[worker %s/%s] Sesion #%s | procesando %s registro(s) pendiente(s): filas %s-%s",
+                        worker_id,
+                        worker_total,
+                        session_index,
+                        len(remaining),
+                        remaining[0].row_number,
+                        remaining[-1].row_number,
+                    )
+                    recovery = SessionRecovery(
+                        page=page,
+                        settings=effective_settings,
+                        credentials=credentials,
+                        grupo=grupo,
+                        navigate_consultas=navigate_consultas,
+                        login_logger=logger,
+                        flow_logger=consultas_logger,
+                    )
+                    process_consultas(page, remaining, consultas_logger, recovery=recovery, sink=collected)
+                    remaining = []  # cola agotada
 
-            return results
-        finally:
-            close_browser(browser, context, logger=logger)
-            run_loggers.close()
+                    if keep_browser_open:
+                        _wait_for_browser_close_if_needed(page, browser, settings, grupo, logger)
+                except Exception as exc:
+                    done_this_session = len(collected) - done_before
+                    remaining = remaining[done_this_session:]
+                    if done_this_session > 0:
+                        consecutive_failed_sessions = 0  # hubo avance: la cola sigue bajando
+                    else:
+                        consecutive_failed_sessions += 1
+
+                    if not remaining:
+                        # Cayo justo al terminar; no queda nada pendiente.
+                        orchestration_logger.warning(
+                            "[%s] Sesion #%s terminada con incidencia (%s) pero sin pendientes",
+                            grupo,
+                            session_index,
+                            type(exc).__name__,
+                        )
+                        break
+
+                    orchestration_logger.warning(
+                        "[%s] Sesion #%s interrumpida (%s) | procesados aqui=%s | pendientes=%s | "
+                        "reabriendo navegador para reanudar desde fila %s",
+                        grupo,
+                        session_index,
+                        type(exc).__name__,
+                        done_this_session,
+                        len(remaining),
+                        remaining[0].row_number,
+                    )
+
+                    if max_failed_sessions and consecutive_failed_sessions >= max_failed_sessions:
+                        orchestration_logger.error(
+                            "[%s] Worker abortado: %s sesiones consecutivas sin avanzar | pendientes=%s",
+                            grupo,
+                            consecutive_failed_sessions,
+                            len(remaining),
+                        )
+                        raise
+
+                    # La espera se aplica en la proxima vuelta, despues de cerrar el navegador.
+                    backoff_pending = True
+                finally:
+                    close_browser(browser, context, logger=logger)
+
+        return collected
+    finally:
+        run_loggers.close()
 
 
 def _run_worker_batch(

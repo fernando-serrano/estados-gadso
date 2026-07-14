@@ -25,7 +25,16 @@ VIEW_SELECTORS = {
     "boton_buscar": "#buscarForm\\:botonBuscar",
     "boton_buscar_vigilantes": "#verForm\\:j_idt201, button:has-text('Buscar vigilantes')",
     "tabla_resultados": "table[role='grid'], #buscarForm\\:buscarDatatable",
-    "ver_primero": "#buscarForm\\:buscarDatatable\\:0\\:j_idt67, a.ui-commandlink:has-text('Ver')",
+    "ver_primero": (
+        # Estructural por texto en la primera fila de resultados (preferente, no depende de IDs dinamicos).
+        "#buscarForm\\:buscarDatatable_data tr:not(.ui-datatable-empty-message):first-child a.ui-commandlink:has-text('Ver'), "
+        "#buscarForm\\:buscarDatatable_data tr:not(.ui-datatable-empty-message):first-child a.ui-commandlink, "
+        # Cualquier enlace de comando con texto Ver dentro de la tabla de resultados.
+        "#buscarForm\\:buscarDatatable a.ui-commandlink:has-text('Ver'), "
+        "a.ui-commandlink:has-text('Ver'), "
+        # Ultimo fallback: ID dinamico PrimeFaces (puede cambiar entre despliegues de SUCAMEC).
+        "#buscarForm\\:buscarDatatable\\:0\\:j_idt67"
+    ),
     "fila_sin_resultados": (
         "#buscarForm\\:buscarDatatable_data tr.ui-datatable-empty-message, "
         "tr.ui-datatable-empty-message"

@@ -14,6 +14,7 @@ from src.agents_flow.extraction_flow import (
 )
 from src.agents_flow.excel_flow import InputRecord, SearchResult
 from src.agents_flow.login_flow.auth import write_input
+from src.agents_flow.recovery import SessionRecovery, run_record_with_recovery
 
 from .navigation import navigate_to_mis_vigilantes
 from .selectors import VIEW_SELECTORS
@@ -183,13 +184,25 @@ def process_records_in_mis_vigilantes(
     page: Page,
     records: list[InputRecord],
     logger: logging.Logger,
+    recovery: SessionRecovery | None = None,
+    sink: list[SearchResult] | None = None,
 ) -> list[SearchResult]:
-    results: list[SearchResult] = []
+    # `sink` permite preservar los resultados ya obtenidos si la sesion cae a mitad:
+    # el runner sabe cuantos se completaron y reanuda desde el registro pendiente.
+    results = sink if sink is not None else []
     if records:
         navigate_to_mis_vigilantes(page, logger)
 
     for index, record in enumerate(records, start=1):
         logger.info("Procesando registro %s/%s", index, len(records))
-        results.append(search_record_and_open_detail(page, record, logger))
+        results.append(
+            run_record_with_recovery(
+                page,
+                record,
+                logger,
+                search_record_and_open_detail,
+                recovery,
+            )
+        )
 
     return results

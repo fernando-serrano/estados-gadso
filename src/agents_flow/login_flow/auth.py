@@ -144,6 +144,43 @@ def wait_until_service_available(page: Page, login_url: str, wait_seconds: int =
         page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
 
 
+def page_shows_server_error_panel(page: Page) -> bool:
+    """Detecta la pantalla 'Error del servidor' (panel-header) tambien en el login."""
+    try:
+        body = (page.locator("body").inner_text(timeout=400) or "").upper()
+    except Exception:
+        return False
+    return "ERROR DEL SERVIDOR" in body or "ERROR INTERNO EN EL SISTEMA" in body
+
+
+def wait_until_login_form_ready(
+    page: Page,
+    settings: Settings,
+    grupo: str,
+    logger: logging.Logger,
+) -> None:
+    """Si SUCAMEC sirve la pantalla de error en lugar del login, re-ingresa al href.
+
+    Replica lo que haria una persona: ante 'Error del servidor', volver a entrar al
+    login y reintentar, en vez de fallar de inmediato.
+    """
+    max_reloads = max(1, settings.server_error_retries)
+    wait_ms = max(0, settings.server_error_wait_ms)
+    for attempt in range(1, max_reloads + 1):
+        if not page_shows_server_error_panel(page):
+            return
+        logger.warning(
+            "[%s] Pantalla de error del servidor en el login; reingresando (%s/%s)",
+            grupo,
+            attempt,
+            max_reloads,
+        )
+        if wait_ms:
+            page.wait_for_timeout(wait_ms)
+        page.goto(settings.login_url, wait_until="domcontentloaded", timeout=45000)
+        wait_until_service_available(page, settings.login_url)
+
+
 def clean_captcha_text(raw_text: str) -> str:
     text = str(raw_text or "").strip().upper().replace(" ", "").replace("\n", "").replace("\r", "")
     return "".join(char for char in text if char.isalnum())
@@ -302,6 +339,7 @@ def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, 
     logger.info("[%s] Navegando a login", grupo)
     page.goto(settings.login_url, wait_until="domcontentloaded", timeout=45000)
     wait_until_service_available(page, settings.login_url)
+    wait_until_login_form_ready(page, settings, grupo, logger)
 
     activate_traditional_tab(page)
 

@@ -46,14 +46,14 @@ def click_ver_and_wait_detail(
             link.wait_for(state="visible", timeout=6000)
 
             if mode == "js":
-                clicked = page.evaluate(
-                    """(selector) => {
-                        const el = document.querySelector(selector);
+                # Click via JS sobre el elemento ya resuelto por Playwright. Evita reusar el
+                # string del selector con document.querySelector, que no soporta :has-text().
+                clicked = link.evaluate(
+                    """(el) => {
                         if (!el) return false;
                         el.click();
                         return true;
-                    }""",
-                    ver_selector,
+                    }"""
                 )
                 if not clicked:
                     raise RuntimeError("No se pudo ejecutar click JS sobre el enlace Ver")

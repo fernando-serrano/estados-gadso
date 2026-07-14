@@ -67,6 +67,9 @@ class Settings:
     login_captcha_retries: int
     force_first_captcha: str
     login_validation_timeout_ms: int
+    server_error_retries: int
+    server_error_wait_ms: int
+    server_error_max_failed_sessions: int
     logs_dir: Path
     lots_dir: Path
     screenshots_dir: Path
@@ -103,6 +106,13 @@ def load_settings() -> Settings:
                 fallback="LOGIN_VALIDATION_TIMEOUT_MS",
             ),
         ),
+        # Reintentos de re-login sobre la MISMA pagina antes de reabrir el navegador.
+        server_error_retries=max(1, int_env("SUCAMEC_SERVER_ERROR_RETRIES", 3)),
+        # Espera antes de re-loguear y antes de reabrir el navegador (deja respirar a SUCAMEC).
+        server_error_wait_ms=max(0, int_env("SUCAMEC_SERVER_ERROR_WAIT_MS", 4000)),
+        # Valvula de seguridad: sesiones (navegador) consecutivas SIN avanzar ningun
+        # registro antes de abortar el worker. 0 = ilimitado (reintenta hasta acabar la cola).
+        server_error_max_failed_sessions=max(0, int_env("SUCAMEC_SERVER_ERROR_MAX_FAILED_SESSIONS", 0)),
         logs_dir=BASE_DIR / str_env("LOG_DIR", "logs"),
         lots_dir=BASE_DIR / "lotes",
         screenshots_dir=BASE_DIR / str_env("SCREENSHOT_DIR", "screenshots"),
