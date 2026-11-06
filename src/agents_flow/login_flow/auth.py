@@ -394,3 +394,46 @@ def login(page: Page, settings: Settings, credentials: Credentials, grupo: str, 
         time.time() - started_at,
         validation_elapsed,
     )
+    dismiss_survey_overlay(page, logger, grupo)
+
+
+SURVEY_OVERLAY_SELECTORS = {
+    "modal": ".encuesta-modal",
+    "cerrar": ".encuesta-overlay-cerrar",
+}
+
+
+def dismiss_survey_overlay(page: Page, logger: logging.Logger, grupo: str = "", wait_ms: int = 4000) -> bool:
+    """Cierra la encuesta de satisfaccion que SUCAMEC superpone en inicio.xhtml.
+
+    Tolerante: si no aparece no hace nada; nunca lanza excepcion.
+    Retorna True si se cerro/removio el overlay.
+    """
+    cerrar = page.locator(SURVEY_OVERLAY_SELECTORS["cerrar"]).first
+    try:
+        cerrar.wait_for(state="visible", timeout=wait_ms)
+    except Exception:
+        logger.info("[%s] Encuesta overlay no presente, se continua", grupo)
+        return False
+
+    try:
+        cerrar.click(timeout=3000)
+        page.locator(SURVEY_OVERLAY_SELECTORS["modal"]).first.wait_for(state="hidden", timeout=3000)
+        logger.info("[%s] Encuesta overlay cerrada con boton X", grupo)
+        return True
+    except Exception as exc:
+        logger.warning("[%s] Clic en cerrar encuesta fallo (%s); forzando cierre por JS", grupo, exc)
+
+    try:
+        page.evaluate(
+            """(sel) => {
+                try { if (typeof cerrarEncuestaOverlay === 'function') cerrarEncuestaOverlay(); } catch (e) {}
+                document.querySelectorAll(sel).forEach(el => el.remove());
+            }""",
+            SURVEY_OVERLAY_SELECTORS["modal"],
+        )
+        logger.info("[%s] Encuesta overlay removida por JS", grupo)
+        return True
+    except Exception as exc:
+        logger.warning("[%s] No se pudo remover encuesta overlay: %s", grupo, exc)
+        return False
