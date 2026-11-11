@@ -947,3 +947,25 @@ El sistema soporta dos empresas (JV Resguardo y SELVA) con credenciales separada
 ### 7. Orden preservado en multiworker
 
 A pesar de que los workers paralelos pueden terminar en orden diferente, el orquestador consolida los resultados en el orden original del Excel de entrada (usando `row_number` de `InputRecord`). El Excel de salida tiene el mismo orden que el de entrada.
+
+---
+
+## 12. Persistencia en MongoDB (plataforma del área)
+
+Al final de cada corrida (después de la validación DSSP y antes del correo) los
+resultados se guardan en `gadso_sucamec_db` (variable `MONGO_DATABASE`). Se activa con `MONGO_ENABLED=1` + `DATABASE_URL`.
+Si Mongo falla, se registra en el log y la corrida termina normal (Excel + correo).
+
+Criterio actual: se ingesta todo lo consultado (se asume personal activo).
+
+| Colección | Contenido | Clave |
+|---|---|---|
+| `estados_sucamec_agentes` | Estado actual por colaborador: estado, carne, cursos, licencia, historial laboral, `historial` de cambios (máx. 50) | `_id = "<NEGOCIO>:<dni>"` |
+| `estados_sucamec_corridas` | Auditoría por corrida: conteo por estado, archivos, resultado de persistencia | `_id = "<NEGOCIO>:<corrida>"` |
+| `sucamec_colaboradores` (view) | Consulta única por colaborador: une estados + `carnet_sucamec_agentes` (bot carnet), fechas normalizadas a Date | `_id = "<NEGOCIO>:<dni>"` |
+
+Reglas:
+- Estados normalizados: VIGENTE, VENCIDO, CESADO, SIN_CARNE, NO_ENCONTRADO (+ `estado_detalle` DSSP), SIN_VER, WORKER_ERROR.
+- Un SIN_VER / WORKER_ERROR no sobrescribe un estado ya conocido (se marca `ultimo_intento_fallido`).
+- Fechas como Date. SUCAMEC no publica "Fec vencimiento" del carne (vacío en la ficha): se calcula emisión + 3 años para emisiones desde 2021 (`carne.fecha_vencimiento_origen = CALCULADA`; 98.6% de acierto contra el historial). Antes de 2021 queda null.
+- Código: `src/agents_flow/persistence_flow/`. Pruebas: `pytest tests` (usan colecciones temporales `test_*` que se borran).

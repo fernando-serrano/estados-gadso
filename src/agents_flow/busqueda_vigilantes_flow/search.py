@@ -5,7 +5,7 @@ import time
 
 from playwright.sync_api import Page
 
-from src.agents_flow.consultas_common import click_ver_and_wait_detail, wait_primefaces_ajax
+from src.agents_flow.consultas_common import click_ver_and_wait_detail, selector_ver_mejor_fila, wait_primefaces_ajax
 from src.agents_flow.extraction_flow import (
     extract_course_fields,
     extract_detail_fields,
@@ -199,7 +199,8 @@ def search_record_and_open_detail(page: Page, record: InputRecord, logger: loggi
         )
 
     row_summary = _extract_first_result_row_summary(page, record.nro_documento)
-    click_ver_and_wait_detail(page, logger, VIEW_SELECTORS["ver_primero"], detail_timeout_ms=18000)
+    ver_selector = selector_ver_mejor_fila(page, logger, VIEW_SELECTORS["ver_primero"])
+    click_ver_and_wait_detail(page, logger, ver_selector, detail_timeout_ms=18000)
 
     logger.info("[FILA %s] Registro abierto con Ver para NRO DOCUMENTO (%s)=%s", record.row_number, doc_type, record.nro_documento)
     detail = extract_detail_fields(page, logger)

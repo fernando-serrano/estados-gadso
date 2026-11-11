@@ -29,6 +29,7 @@ from src.agents_flow.login_flow.config import credentials_for_group, load_settin
 from src.agents_flow.login_flow.logging import RunLoggers, max_run_dirs, prune_old_run_dirs
 from src.agents_flow.mis_vigilantes_flow import navigate_to_mis_vigilantes, process_records_in_mis_vigilantes
 from src.agents_flow.notifications import send_run_summary_mail
+from src.agents_flow.persistence_flow import persist_run_results
 from src.agents_flow.recovery import SessionRecovery
 
 T = TypeVar("T")
@@ -628,6 +629,14 @@ def run_group_flow(grupo: str, solo_login: bool = False) -> None:
             filename_prefix="RB_GADSOValidacionNoEncontradosSUCAMEC",
         )
         notification_attachments = [primary_output_path, validation_output_path]
+
+        persist_run_results(
+            grupo=grupo,
+            run_name=run_name,
+            results=merged_dssp_results,
+            attachments=notification_attachments,
+            logger=orchestration_logger,
+        )
 
         send_run_summary_mail(
             grupo=grupo,
