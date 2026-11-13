@@ -1,5 +1,5 @@
 MENU_SELECTORS = {
-    "menu_root": "#j_idt11\\:menuPrincipal, #j_idt11\\:menuprincipal",
+    "menu_root": '[id$=":menuPrincipal"], [id$=":menuprincipal"]',
     "header_consultas": (
         '.ui-panelmenu-header:has(a:text-is("CONSULTAS")), '
         '.ui-panelmenu-header:has(a:has-text("CONSULTAS")), '
@@ -13,15 +13,15 @@ MENU_SELECTORS = {
         '.ui-menuitem-link:has(span.ui-menuitem-text:has-text("Mis vigilantes"))'
     ),
     "item_mis_vigilantes_onclick": (
-        'a[onclick*="addSubmitParam"][onclick*="j_idt11:menuprincipal"]:has(span.ui-menuitem-text:text-is("MIS VIGILANTES")), '
-        'a[onclick*="addSubmitParam"][onclick*="j_idt11:menuPrincipal"]:has(span.ui-menuitem-text:text-is("MIS VIGILANTES")), '
-        'a[onclick*="addSubmitParam"][onclick*="j_idt11:menuprincipal"]:has(span.ui-menuitem-text:has-text("MIS VIGILANTES")), '
-        'a[onclick*="addSubmitParam"][onclick*="j_idt11:menuPrincipal"]:has(span.ui-menuitem-text:has-text("MIS VIGILANTES"))'
+        'a[onclick*="addSubmitParam"][onclick*=":menuprincipal"]:has(span.ui-menuitem-text:text-is("MIS VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:text-is("MIS VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuprincipal"]:has(span.ui-menuitem-text:has-text("MIS VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:has-text("MIS VIGILANTES"))'
     ),
 }
 
 VIEW_SELECTORS = {
-    "criterio_busqueda": "#buscarForm\\:j_idt32",
+    "criterio_busqueda": "#buscarForm\\:j_idt32, #buscarForm input[placeholder^='Criterio']",
     "boton_buscar": "#buscarForm\\:botonBuscar",
     "boton_buscar_vigilantes": "#verForm\\:j_idt201, button:has-text('Buscar vigilantes')",
     "tabla_resultados": "table[role='grid'], #buscarForm\\:buscarDatatable",

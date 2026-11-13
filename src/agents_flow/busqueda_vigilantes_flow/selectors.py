@@ -1,5 +1,5 @@
 MENU_SELECTORS = {
-    "menu_root": "#j_idt11\\:menuPrincipal, #j_idt11\\:menuprincipal",
+    "menu_root": '[id$=":menuPrincipal"], [id$=":menuprincipal"]',
     "header_consultas": (
         '.ui-panelmenu-header:has(a:text-is("CONSULTAS")), '
         '.ui-panelmenu-header:has(a:has-text("CONSULTAS")), '
@@ -13,10 +13,10 @@ MENU_SELECTORS = {
         '.ui-menuitem-link:has(span.ui-menuitem-text:has-text("BÚSQUEDA DE VIGILANTES"))'
     ),
     "item_busqueda_vigilantes_onclick": (
-        'a[onclick*="PrimeFaces.ab"][onclick*="j_idt11"]:has(span.ui-menuitem-text:text-is("BUSQUEDA DE VIGILANTES")), '
-        'a[onclick*="PrimeFaces.ab"][onclick*="j_idt11"]:has(span.ui-menuitem-text:has-text("BUSQUEDA DE VIGILANTES")), '
-        'a[onclick*="PrimeFaces.ab"][onclick*="j_idt11"]:has(span.ui-menuitem-text:text-is("BÚSQUEDA DE VIGILANTES")), '
-        'a[onclick*="PrimeFaces.ab"][onclick*="j_idt11"]:has(span.ui-menuitem-text:has-text("BÚSQUEDA DE VIGILANTES"))'
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:text-is("BUSQUEDA DE VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:has-text("BUSQUEDA DE VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:text-is("BÚSQUEDA DE VIGILANTES")), '
+        'a[onclick*="addSubmitParam"][onclick*=":menuPrincipal"]:has(span.ui-menuitem-text:has-text("BÚSQUEDA DE VIGILANTES"))'
     ),
 }
 
@@ -27,7 +27,7 @@ VIEW_SELECTORS = {
     "opcion_nro_dni": "#buscarForm\\:tipoId_1",
     "opcion_nro_ce": "#buscarForm\\:tipoId_2",
     "criterio_busqueda": (
-        "#buscarForm\\:j_idt35, "
+        "#buscarForm\\:j_idt35, #buscarForm input[placeholder^='Criterio'], "
         "#buscarForm input.ui-inputtext[type='text']"
         ":not([aria-hidden='true'])"
         ":not(.ui-selectonemenu-filter)"

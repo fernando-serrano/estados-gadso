@@ -53,7 +53,7 @@ def _click_bandeja_emision_fast_path(page: Page, logger: logging.Logger) -> bool
                     .trim()
                     .toUpperCase();
 
-                const target = Array.from(document.querySelectorAll('a[onclick*="PrimeFaces.ab"]'))
+                const target = Array.from(document.querySelectorAll('a[onclick*="PrimeFaces.ab"], a[onclick*="addSubmitParam"], a.ui-menuitem-link'))
                     .find((anchor) => normalize(anchor.textContent) === 'BANDEJA DE EMISION');
                 if (!target) return false;
                 target.click();
